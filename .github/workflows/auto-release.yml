@@ -202,33 +202,27 @@ jobs:
 
       - name: Build Redis 7.2.7 (static musl)
         run: |
-          sudo apt-get install -y --no-install-recommends musl-tools
-          mkdir -p /tmp/redis-src /tmp/redis-out
-          python3 - << 'PYEOF'
-          import urllib.request, os
-
-          url = 'https://github.com/redis/redis/archive/refs/tags/7.2.7.tar.gz'
-          out = '/tmp/redis-src/redis-7.2.7.tar.gz'
-          req = urllib.request.Request(url, headers={'User-Agent': 'github-actions-immich-spk/1.0'})
-          print('Downloading Redis 7.2.7 from GitHub...')
-          with urllib.request.urlopen(req) as r, open(out, 'wb') as f:
-              f.write(r.read())
-          print('Downloaded: ' + str(os.path.getsize(out)) + ' bytes')
-          PYEOF
-          cd /tmp/redis-src
-          tar xzf redis-7.2.7.tar.gz
-          cd redis-7.2.7
-          make -j$(nproc) \
-            CC=musl-gcc \
-            LDFLAGS="-static" \
-            MALLOC=libc \
-            REDIS_CFLAGS= \
-            REDIS_LDFLAGS= \
-            redis-server redis-cli
-          file src/redis-server
           mkdir -p /tmp/redis-out/bin
-          cp src/redis-server /tmp/redis-out/bin/
-          cp src/redis-cli    /tmp/redis-out/bin/
+          docker run --rm \
+            -v /tmp/redis-out/bin:/out \
+            alpine:3.19 \
+            sh -c '
+              apk add --no-cache make gcc musl-dev linux-headers wget tar &&
+              wget -q -O /tmp/redis.tar.gz \
+                "https://github.com/redis/redis/archive/refs/tags/7.2.7.tar.gz" &&
+              mkdir /tmp/redis-src &&
+              tar xzf /tmp/redis.tar.gz -C /tmp/redis-src --strip-components=1 &&
+              cd /tmp/redis-src &&
+              make -j$(nproc) \
+                LDFLAGS="-static" \
+                MALLOC=libc \
+                REDIS_CFLAGS= \
+                REDIS_LDFLAGS= \
+                redis-server redis-cli &&
+              cp src/redis-server src/redis-cli /out/
+            '
+          file /tmp/redis-out/bin/redis-server
+          mkdir -p /tmp/redis-out/bin
           COPYFILE_DISABLE=1 tar czf "/tmp/redis-out/redis-${ARCH}.tar.gz" \
             -C /tmp/redis-out bin/
           echo "Redis tarball: $(du -h /tmp/redis-out/redis-${ARCH}.tar.gz | cut -f1)"
