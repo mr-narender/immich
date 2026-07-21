@@ -218,8 +218,7 @@ jobs:
                 LDFLAGS="-static" \
                 MALLOC=libc \
                 REDIS_CFLAGS= \
-                REDIS_LDFLAGS= \
-                redis-server redis-cli &&
+                REDIS_LDFLAGS= &&
               cp src/redis-server src/redis-cli /out/
             '
           file /tmp/redis-out/bin/redis-server
