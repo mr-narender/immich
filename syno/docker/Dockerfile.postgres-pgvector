@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+# Single-stage: official postgres:14 amd64 + pgvector v0.8.0
+# No multi-stage COPY — avoids BuildKit digest issue on arm64 hosts.
+FROM --platform=linux/amd64 postgres:14
+
+ARG PGVECTOR_VERSION=0.8.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    make \
+    gcc \
+    postgresql-server-dev-14 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --branch "v${PGVECTOR_VERSION}" --depth 1 \
+      https://github.com/pgvector/pgvector.git /build/pgvector \
+    && cd /build/pgvector \
+    && make -j2 \
+    && make install \
+    && rm -rf /build/pgvector \
+    && /bin/ls /usr/lib/postgresql/14/lib/vector.so \
+    && echo "pgvector ${PGVECTOR_VERSION} installed OK"

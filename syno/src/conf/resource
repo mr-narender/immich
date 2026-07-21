@@ -1,0 +1,6 @@
+{
+  "usr-local-linker": {
+    "lib": [],
+    "bin": []
+  }
+}

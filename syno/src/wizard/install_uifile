@@ -1,0 +1,70 @@
+[
+  {
+    "step_title": "Upload Location",
+    "items": [
+      {
+        "type": "textfield",
+        "desc": "Path to the shared folder where Immich will store uploads, thumbnails, and encoded video. Must be an absolute path on a Synology volume (e.g. /volume1/immich). The folder will be created if it does not exist.",
+        "subitems": [
+          {
+            "key": "WIZARD_UPLOAD_LOCATION",
+            "defaultValue": "/volume1/immich",
+            "validator": {
+              "allowBlank": false,
+              "minLength": 2,
+              "regex": {
+                "expr": "^/volume[0-9]+/",
+                "errorText": "Path must start with /volume<N>/"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "step_title": "Database Password",
+    "items": [
+      {
+        "type": "password",
+        "desc": "Password for the bundled PostgreSQL database user 'immich'. A secure random value is pre-filled. Change only if you have a reason to.",
+        "subitems": [
+          {
+            "key": "WIZARD_DB_PASSWORD",
+            "defaultValue": "",
+            "validator": {
+              "allowBlank": false,
+              "minLength": 8
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "step_title": "Machine Learning",
+    "items": [
+      {
+        "type": "radiolist",
+        "desc": "Enable the built-in machine learning service for smart search, facial recognition, and CLIP embeddings. Requires approximately 2 GB of additional RAM. You can change this later from Package Center.",
+        "subitems": [
+          {
+            "key": "WIZARD_ML_ENABLED",
+            "defaultValue": "no",
+            "displaySuffix": "",
+            "values": [
+              {
+                "value": "no",
+                "label": "Disabled (recommended for systems with less than 8 GB RAM)"
+              },
+              {
+                "value": "yes",
+                "label": "Enabled"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

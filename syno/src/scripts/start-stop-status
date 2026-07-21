@@ -1,0 +1,283 @@
+#!/bin/sh
+# start-stop-status — DSM package lifecycle script
+# Boots bundled deps (Redis, PostgreSQL) and waits until each is READY
+# before launching Immich. Immich is never started unless both deps are up.
+INSTALL_ROOT="/var/packages/immich/target"
+PKG_VAR="/var/packages/immich/var"          # persists across package upgrades
+RUN_DIR="${INSTALL_ROOT}/run"
+LOG_DIR="${INSTALL_ROOT}/log"
+
+REDIS_BIN="${INSTALL_ROOT}/redis/bin"
+REDIS_DIR="${PKG_VAR}/redis"
+
+# Vanilla source build uses simple prefix layout (NOT Debian's nested dirs)
+PG_BIN="${INSTALL_ROOT}/postgres/bin"
+PG_SHARE="${INSTALL_ROOT}/postgres/share"
+PG_LIB="${INSTALL_ROOT}/postgres/lib"
+PG_DATA="${PKG_VAR}/pgdata"
+
+PID_SERVER="${RUN_DIR}/immich-server.pid"
+PID_MICRO="${RUN_DIR}/immich-microservices.pid"
+PID_ML="${RUN_DIR}/immich-ml.pid"
+PID_REDIS="${RUN_DIR}/redis.pid"
+PID_CONFIGUI="${RUN_DIR}/config-ui.pid"
+
+CONFIG_UI_DIR="${PKG_VAR}/config-ui"
+NODE_BIN="${INSTALL_ROOT}/node/bin/node"
+
+# Ensure ml-settings.env exists so immich.conf can source it safely
+[ -f /var/packages/immich/var/ml-settings.env ] || \
+    printf 'export ML_ENABLED=false\n' > /var/packages/immich/var/ml-settings.env 2>/dev/null || true
+
+# Load conf (DSM writes it from conf/immich.conf)
+[ -f "${INSTALL_ROOT}/conf/immich.conf" ] && . "${INSTALL_ROOT}/conf/immich.conf"
+# Load ML settings managed by config-ui on port 2284 (may override immich.conf values)
+[ -f "${PKG_VAR}/ml-settings.env" ] && . "${PKG_VAR}/ml-settings.env"
+DB_USERNAME="${DB_USERNAME:-immich}"
+DB_PASSWORD="${DB_PASSWORD:-immich}"
+DB_DATABASE_NAME="${DB_DATABASE_NAME:-immich}"
+MACHINE_LEARNING_ENABLED="${MACHINE_LEARNING_ENABLED:-false}"
+IMMICH_PORT="${IMMICH_PORT:-2283}"
+
+# ── Dynamic port selection — never blindly hardcode. DSM runs its OWN postgres on
+# 5432, and other packages may hold 6379. Priority: explicit value in immich.conf
+# wins; else reuse the previously-chosen port if still free; else scan upward. ──
+PORTS_FILE="${PKG_VAR}/ports.env"
+[ -f "${PORTS_FILE}" ] && . "${PORTS_FILE}"
+_port_free() { ! { netstat -tln 2>/dev/null || ss -tln 2>/dev/null; } | grep -q ":$1 "; }
+_pick_port() {  # $1=scan-start  $2=previously-persisted (reuse if still free)
+    if [ -n "$2" ] && _port_free "$2"; then echo "$2"; return; fi
+    _p="$1"; while ! _port_free "${_p}"; do _p=$((_p + 1)); done; echo "${_p}"
+}
+DB_PORT="${DB_PORT:-$(_pick_port 5432 "${DB_PORT_PERSISTED:-}")}"
+REDIS_PORT="${REDIS_PORT:-$(_pick_port 6379 "${REDIS_PORT_PERSISTED:-}")}"
+mkdir -p "${PKG_VAR}"
+printf 'DB_PORT_PERSISTED=%s\nREDIS_PORT_PERSISTED=%s\n' "${DB_PORT}" "${REDIS_PORT}" > "${PORTS_FILE}"
+export DB_PORT REDIS_PORT DB_USERNAME DB_PASSWORD DB_DATABASE_NAME
+
+# ML is NOT bundled — it is provisioned at first run via uv (PyPI). The venv +
+# uv-managed python live under PKG_VAR so they survive package upgrades.
+UV_BIN="${INSTALL_ROOT}/toolchain/uv"
+ML_DIR="${INSTALL_ROOT}/machine-learning"
+ML_VENV="${PKG_VAR}/ml-venv"
+
+# psql/pg_isready link libpq.so.5 (in $PG_LIB); the server binary is glibc-only
+export LD_LIBRARY_PATH="${PG_LIB}:${LD_LIBRARY_PATH:-}"
+
+_log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${LOG_DIR}/start-stop-status.log"; }
+
+# ── Redis ─────────────────────────────────────────────────────────────────
+_start_redis() {
+    [ -x "${REDIS_BIN}/redis-server" ] || { _log "redis-server missing"; return 1; }
+    mkdir -p "${REDIS_DIR}"
+    "${REDIS_BIN}/redis-server" \
+        --port "${REDIS_PORT}" \
+        --bind 127.0.0.1 \
+        --dir "${REDIS_DIR}" \
+        --save "" \
+        --appendonly no \
+        --daemonize no \
+        >> "${LOG_DIR}/redis.log" 2>&1 &
+    echo $! > "${PID_REDIS}"
+}
+
+_wait_redis() {
+    i=0
+    while [ "${i}" -lt 30 ]; do
+        "${REDIS_BIN}/redis-cli" -p "${REDIS_PORT}" ping 2>/dev/null | grep -q PONG && return 0
+        i=$((i + 1)); sleep 1
+    done
+    return 1
+}
+
+# ── PostgreSQL ──────────────────────────────────────────────────────────────
+_init_postgres() {
+    [ -f "${PG_DATA}/PG_VERSION" ] && return 0     # already initialised
+    mkdir -p "${PG_DATA}"
+    "${PG_BIN}/initdb" -D "${PG_DATA}" -U "${DB_USERNAME}" -L "${PG_SHARE}" \
+        --auth=trust -E UTF8 >> "${LOG_DIR}/postgres-init.log" 2>&1 || return 1
+    # Listen on localhost only. dynamic_library_path left at default ($libdir =
+    # this build's pkglibdir $P/lib, resolved relocatably) — vector.so lives there.
+    cat >> "${PG_DATA}/postgresql.conf" << PGCONF
+listen_addresses = '127.0.0.1'
+port = ${DB_PORT}
+unix_socket_directories = '${RUN_DIR}'
+PGCONF
+}
+
+_wait_pg() {
+    i=0
+    while [ "${i}" -lt 60 ]; do
+        "${PG_BIN}/pg_isready" -h 127.0.0.1 -p "${DB_PORT}" -U "${DB_USERNAME}" >/dev/null 2>&1 && return 0
+        i=$((i + 1)); sleep 1
+    done
+    return 1
+}
+
+_bootstrap_db() {
+    [ -f "${PG_DATA}/.immich-bootstrapped" ] && return 0
+    PSQL="${PG_BIN}/psql -h 127.0.0.1 -p ${DB_PORT} -U ${DB_USERNAME}"
+    # Create role password (cosmetic under trust, but immich passes it)
+    ${PSQL} -d postgres -c "ALTER USER ${DB_USERNAME} WITH PASSWORD '${DB_PASSWORD}';" >> "${LOG_DIR}/postgres.log" 2>&1
+    # Create DB if absent
+    if ! ${PSQL} -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_DATABASE_NAME}'" 2>/dev/null | grep -q 1; then
+        ${PSQL} -d postgres -c "CREATE DATABASE ${DB_DATABASE_NAME} OWNER ${DB_USERNAME};" >> "${LOG_DIR}/postgres.log" 2>&1
+    fi
+    # pgvector extension — MANDATORY for immich. If it fails, do NOT mark the DB
+    # bootstrapped (next start retries) and signal failure to the caller.
+    if ! ${PSQL} -d "${DB_DATABASE_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" >> "${LOG_DIR}/postgres.log" 2>&1; then
+        _log "CREATE EXTENSION vector failed — see postgres.log; leaving DB un-bootstrapped for retry"
+        return 1
+    fi
+    touch "${PG_DATA}/.immich-bootstrapped"
+    return 0
+}
+
+_start_postgres() {
+    mkdir -p "${PG_DATA}" "${RUN_DIR}" "${LOG_DIR}"
+    _init_postgres || { _log "initdb failed — see postgres-init.log"; return 1; }
+    # -o overrides any stale postgresql.conf (DSM preserves pgdata across reinstall,
+    # so a changed DB_PORT must win at runtime) — port/socket/listen are authoritative here.
+    "${PG_BIN}/pg_ctl" -D "${PG_DATA}" -l "${LOG_DIR}/postgres.log" \
+        -o "-p ${DB_PORT} -k ${RUN_DIR} -c listen_addresses=127.0.0.1" \
+        -w -t 60 start \
+        >> "${LOG_DIR}/postgres.log" 2>&1 || { _log "pg_ctl start failed"; return 1; }
+    _wait_pg || { _log "postgres not ready after 60s"; return 1; }
+    _bootstrap_db || { _log "db bootstrap failed — not starting immich"; return 1; }
+    return 0
+}
+
+_stop_postgres() {
+    [ -f "${PG_DATA}/PG_VERSION" ] || return 0
+    "${PG_BIN}/pg_ctl" -D "${PG_DATA}" -m fast -w -t 30 stop >> "${LOG_DIR}/postgres.log" 2>&1 || true
+}
+
+# ── Machine Learning (provisioned at runtime via uv — NOT bundled) ──────────
+_check_net() {
+    # best-effort reachability; uv surfaces the real error if this passes but DNS/HTTPS fail
+    for ip in 1.1.1.1 8.8.8.8 9.9.9.9; do
+        ping -c1 -W2 "${ip}" >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
+_provision_ml() {
+    [ -x "${ML_VENV}/bin/python" ] && return 0     # already provisioned
+    [ -x "${UV_BIN}" ] || { _log "uv missing — cannot provision ML"; return 1; }
+    # No ping-based net gate (DSM blocks ICMP). Just attempt uv; if offline it
+    # fails cleanly below and core Immich keeps running without ML.
+    _log "Provisioning ML via uv (needs internet; downloads python + ML wheels, ~hundreds of MB, first run only)..."
+    mkdir -p "${ML_VENV%/*}"
+    ( cd "${ML_DIR}" && \
+      UV_PYTHON_INSTALL_DIR="${PKG_VAR}/uv-python" "${UV_BIN}" venv "${ML_VENV}" --python 3.11 && \
+      UV_PYTHON_INSTALL_DIR="${PKG_VAR}/uv-python" UV_CACHE_DIR="${PKG_VAR}/uv-cache" \
+        "${UV_BIN}" pip install --python "${ML_VENV}/bin/python" '.[cpu]' \
+    ) >> "${LOG_DIR}/ml-provision.log" 2>&1 || { _log "ML provisioning FAILED — see ml-provision.log"; return 1; }
+    _log "ML provisioning complete"
+}
+
+_start_ml() {
+    [ -x "${ML_VENV}/bin/python" ] || return 1
+    ( cd "${ML_DIR}" && \
+      MACHINE_LEARNING_CACHE_FOLDER="${MACHINE_LEARNING_CACHE_FOLDER:-/volume1/docker/immich/model-cache}" \
+      IMMICH_ML_HOST="${IMMICH_ML_HOST:-127.0.0.1}" IMMICH_ML_PORT="${IMMICH_ML_PORT:-3003}" \
+      "${ML_VENV}/bin/python" -m immich_ml >> "${LOG_DIR}/machine-learning.log" 2>&1 ) &
+    echo $! > "${PID_ML}"
+}
+
+# ── Config UI (port 2284, persists in PKG_VAR across reboots) ────────────
+_start_configui() {
+    # Bootstrap: copy from package install dir if not yet in persistent location
+    if [ ! -d "${CONFIG_UI_DIR}" ] && [ -d "${INSTALL_ROOT}/config-ui" ]; then
+        mkdir -p "${CONFIG_UI_DIR}"
+        cp "${INSTALL_ROOT}/config-ui/server.cjs" "${CONFIG_UI_DIR}/" 2>/dev/null || true
+        cp "${INSTALL_ROOT}/config-ui/index.html" "${CONFIG_UI_DIR}/" 2>/dev/null || true
+    fi
+    [ -f "${CONFIG_UI_DIR}/server.cjs" ] || { _log "_start_configui: server.cjs not found — skipping"; return 0; }
+    [ -x "${NODE_BIN}" ] || { _log "_start_configui: node binary missing — skipping"; return 0; }
+    "${NODE_BIN}" "${CONFIG_UI_DIR}/server.cjs" >> "${LOG_DIR}/config-ui.log" 2>&1 &
+    echo $! > "${PID_CONFIGUI}"
+    _log "_start_configui: started on :2284 (pid=$!)"
+}
+
+# ── Immich ────────────────────────────────────────────────────────────────
+_start() {
+    mkdir -p "${RUN_DIR}" "${LOG_DIR}"
+
+    # Recreate pg_dump symlink on every start — /usr/lib is transient on DSM (resets on reboot).
+    # Immich's DatabaseBackup job hardcodes /usr/lib/postgresql/14/bin/pg_dump (Debian convention).
+    mkdir -p /usr/lib/postgresql/14/bin
+    ln -sf "${PG_BIN}/pg_dump" /usr/lib/postgresql/14/bin/pg_dump 2>/dev/null || true
+    _log "pg_dump symlink ensured → /usr/lib/postgresql/14/bin/pg_dump"
+
+    # Dependencies first — gate Immich on both being READY
+    _start_redis
+    if ! _wait_redis; then
+        _log "Redis did not become ready — not starting Immich"
+        return 1
+    fi
+    if ! _start_postgres; then
+        _log "PostgreSQL did not become ready — not starting Immich"
+        return 1
+    fi
+
+    # Both deps up — launch Immich. ONE process runs BOTH the api + microservices
+    # workers (immich's internal cluster, IMMICH_WORKERS default = api,microservices).
+    # Do NOT launch a second microservices process — duplicating it makes a worker
+    # crash ("api worker exited with code 1") and leaves DSM unable to track the PID.
+    "${INSTALL_ROOT}/bin/immich-server" >> "${LOG_DIR}/server.log" 2>&1 &
+    echo $! > "${PID_SERVER}"
+
+    # Core is up. ML is optional + provisioned at runtime (never blocks core).
+    if [ "${MACHINE_LEARNING_ENABLED}" = "true" ]; then
+        if _provision_ml; then
+            _start_ml
+        else
+            _log "Continuing without ML (provisioning unavailable/offline)."
+        fi
+    fi
+
+    # Config UI is optional — never blocks Immich startup.
+    _start_configui
+    return 0
+}
+
+_stop() {
+    # Config UI first (non-critical)
+    if [ -f "${PID_CONFIGUI}" ]; then
+        kill "$(cat "${PID_CONFIGUI}")" 2>/dev/null || true
+        rm -f "${PID_CONFIGUI}"
+    fi
+    # Immich processes
+    for pidfile in "${PID_SERVER}" "${PID_MICRO}" "${PID_ML}"; do
+        if [ -f "${pidfile}" ]; then
+            kill "$(cat "${pidfile}")" 2>/dev/null || true
+            rm -f "${pidfile}"
+        fi
+    done
+    # Then PostgreSQL (graceful)
+    _stop_postgres
+    # Redis last
+    if [ -f "${PID_REDIS}" ]; then
+        kill "$(cat "${PID_REDIS}")" 2>/dev/null || true
+        rm -f "${PID_REDIS}"
+    fi
+    return 0
+}
+
+_status() {
+    # immich reparents to init + renames its process, so a PID-file check is
+    # unreliable. The authoritative signal is its HTTP port listening.
+    { netstat -tln 2>/dev/null || ss -tln 2>/dev/null; } | grep -q ":${IMMICH_PORT} " && return 0
+    # fallback: tracked PID still alive
+    [ -f "${PID_SERVER}" ] && kill -0 "$(cat "${PID_SERVER}")" 2>/dev/null && return 0
+    return 1
+}
+
+case "$1" in
+    start)   _start ;;
+    stop)    _stop ;;
+    status)  _status ;;
+    restart) _stop; sleep 2; _start ;;
+    *)       echo "Usage: $0 {start|stop|status|restart}"; exit 1 ;;
+esac

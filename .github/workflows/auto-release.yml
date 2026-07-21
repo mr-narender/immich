@@ -1,0 +1,300 @@
+name: Auto Release Synology SPK
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Force specific version (e.g. 3.0.2). Leave empty to auto-detect.'
+        required: false
+        type: string
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      spk_version: ${{ steps.detect.outputs.spk_version }}
+      should_release: ${{ steps.detect.outputs.should_release }}
+    steps:
+      - name: Detect latest Immich version
+        id: detect
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(python3 -c "
+          import urllib.request, json, ssl
+          ctx = ssl.create_default_context()
+          req = urllib.request.Request(
+            'https://api.github.com/repos/immich-app/immich/releases/latest',
+            headers={'User-Agent': 'mr-narender-immich-spk'}
+          )
+          data = json.loads(urllib.request.urlopen(req, context=ctx).read())
+          print(data['tag_name'].lstrip('v'))
+          ")
+          fi
+          SPK_VERSION="${VERSION}-1"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "spk_version=$SPK_VERSION" >> $GITHUB_OUTPUT
+
+          # Check if release already exists
+          HTTP=$(python3 -c "
+          import urllib.request, ssl
+          ctx = ssl.create_default_context()
+          try:
+            req = urllib.request.Request(
+              'https://api.github.com/repos/${{ github.repository }}/releases/tags/v${SPK_VERSION}',
+              headers={'User-Agent': 'mr-narender-immich-spk'}
+            )
+            urllib.request.urlopen(req, context=ctx)
+            print('200')
+          except urllib.error.HTTPError as e:
+            print(e.code)
+          ")
+          if [ "$HTTP" = "200" ]; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "Release v${SPK_VERSION} already exists — skipping."
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "New version: v${VERSION} (SPK ${SPK_VERSION})"
+          fi
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
+      SPK_VERSION: ${{ needs.detect.outputs.spk_version }}
+    steps:
+      - name: Checkout overlay repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clone Immich source at tag
+        run: |
+          git clone --depth 1 --branch "v${VERSION}" \
+            https://github.com/immich-app/immich.git /tmp/immich-src
+          echo "Cloned v${VERSION}: $(git -C /tmp/immich-src rev-parse HEAD)"
+
+      - name: Update submodule pointer in repo
+        run: |
+          COMMIT=$(git -C /tmp/immich-src rev-parse HEAD)
+          git update-index --cacheinfo 160000,${COMMIT},immich
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable corepack (pnpm from packageManager)
+        run: |
+          corepack enable
+          cd /tmp/immich-src
+          corepack prepare --activate
+
+      - name: Build Immich (server + web)
+        working-directory: /tmp/immich-src
+        run: |
+          pnpm install --frozen-lockfile > /tmp/immich-build.log 2>&1
+          pnpm --filter @immich/sdk build >> /tmp/immich-build.log 2>&1
+          pnpm --filter @immich/plugin-sdk build >> /tmp/immich-build.log 2>&1 || true
+          pnpm --filter immich build >> /tmp/immich-build.log 2>&1
+          pnpm --filter immich-web build >> /tmp/immich-build.log 2>&1
+          echo "Build complete. Last 5 lines:"
+          tail -5 /tmp/immich-build.log
+
+      - name: Deploy server (prod node_modules)
+        working-directory: /tmp/immich-src
+        run: |
+          pnpm --filter immich deploy --prod --legacy /tmp/server-deploy >> /tmp/immich-build.log 2>&1 \
+            || pnpm --filter immich deploy --prod /tmp/server-deploy >> /tmp/immich-build.log 2>&1
+          test -f /tmp/server-deploy/dist/main.js || test -f /tmp/server-deploy/dist/main \
+            || { echo "DIST_MISSING"; tail -30 /tmp/immich-build.log; exit 1; }
+          node -e "require('sharp'); console.log('SHARP_OK', require('sharp/package.json').version)" \
+            || { echo "SHARP_LOAD_FAIL"; exit 1; }
+
+      - name: Prune non-linux-x64 native prebuilds
+        working-directory: /tmp/server-deploy/node_modules
+        run: |
+          find . -type d \( -name '*darwin*' -o -name '*win32*' -o -name '*linuxmusl*' \
+            -o -name '*linux-arm' -o -name '*linux-arm64' -o -name '*linux-s390x' \
+            -o -name '*linux-ppc64*' -o -name '*android*' -o -name '*freebsd*' \) \
+            -exec rm -rf {} + 2>/dev/null || true
+          find . -type f \( -name '*.map' -o -name '*.markdown' \) -delete 2>/dev/null || true
+          find . -type d -name '.github' -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Package server tarball
+        run: |
+          mkdir -p /tmp/immich-spk-work
+          tar czf /tmp/immich-spk-work/server-linux-x64.tar.gz -C /tmp/server-deploy .
+          echo "Server tar: $(du -sh /tmp/immich-spk-work/server-linux-x64.tar.gz | cut -f1)"
+
+      - name: Package web tarball
+        run: |
+          WEB_SRC=/tmp/immich-src/web
+          BUILD_DIR=""
+          [ -d "$WEB_SRC/build" ] && BUILD_DIR="build"
+          [ -d "$WEB_SRC/dist" ] && BUILD_DIR="dist"
+          [ -z "$BUILD_DIR" ] && { echo "No web build dir found"; ls "$WEB_SRC"; exit 1; }
+          tar czf /tmp/immich-spk-work/web-build.tar.gz -C "$WEB_SRC" "$BUILD_DIR"
+          echo "Web tar: $(du -sh /tmp/immich-spk-work/web-build.tar.gz | cut -f1)"
+
+      - name: Download base SPK (binary deps — postgres/redis/node/geodata)
+        run: |
+          python3 -c "
+          import urllib.request, ssl
+          ctx = ssl.create_default_context()
+          req = urllib.request.Request(
+            'https://github.com/${{ github.repository }}/releases/download/base-deps-2.7.5/immich-x86_64-2.7.5-1.spk',
+            headers={'User-Agent': 'mr-narender-immich-spk'}
+          )
+          with urllib.request.urlopen(req, context=ctx) as r, open('immich-x86_64-2.7.5-1.spk', 'wb') as f:
+            f.write(r.read())
+          "
+          echo "Base SPK: $(du -sh immich-x86_64-2.7.5-1.spk | cut -f1)"
+
+      - name: Patch syno/INFO
+        run: |
+          CHANGELOG=$(python3 -c "
+          import urllib.request, json, ssl
+          ctx = ssl.create_default_context()
+          req = urllib.request.Request(
+            'https://api.github.com/repos/immich-app/immich/releases/tags/v${VERSION}',
+            headers={'User-Agent': 'mr-narender-immich-spk'}
+          )
+          try:
+            data = json.loads(urllib.request.urlopen(req, context=ctx).read())
+            body = data.get('body', '')
+            lines = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith('#')]
+            print(lines[0][:120] if lines else 'Immich v${VERSION}')
+          except Exception:
+            print('Immich v${VERSION}')
+          " 2>/dev/null || echo "Immich v${VERSION}")
+
+          python3 - <<'PYEOF'
+          import re, pathlib, os
+          info = pathlib.Path('syno/INFO')
+          text = info.read_text()
+          version = os.environ['SPK_VERSION']
+          immich_version = os.environ['VERSION']
+          changelog = os.environ.get('CHANGELOG', f'Immich v{immich_version}')
+          text = re.sub(r'^version="[^"]*"', f'version="{version}"', text, flags=re.M)
+          text = re.sub(r'^changelog="[^"]*"', f'changelog="Immich v{immich_version} — {changelog}"', text, flags=re.M)
+          info.write_text(text)
+          print('INFO patched to', version)
+          PYEOF
+        env:
+          CHANGELOG: ${{ env.CHANGELOG }}
+
+      - name: Assemble SPK
+        run: |
+          REPO="$(pwd)" \
+          VERSION="${SPK_VERSION}" \
+          BASE_SPK="$(pwd)/immich-x86_64-2.7.5-1.spk" \
+          OUT_SPK="$(pwd)/immich-x86_64-${SPK_VERSION}.spk" \
+          SERVER_TAR="/tmp/immich-spk-work/server-linux-x64.tar.gz" \
+          WEB_TAR="/tmp/immich-spk-work/web-build.tar.gz" \
+          COPYFILE_DISABLE=1 \
+          bash syno/assemble-hybrid.sh
+          echo "SPK: $(du -sh immich-x86_64-${SPK_VERSION}.spk | cut -f1)"
+
+      - name: Update packages.json feed
+        run: |
+          SPK_SIZE=$(stat -c%s "immich-x86_64-${SPK_VERSION}.spk")
+          SPK_MD5=$(md5sum "immich-x86_64-${SPK_VERSION}.spk" | cut -d' ' -f1)
+          REPO="${{ github.repository }}"
+          python3 - <<PYEOF
+          import json, pathlib, os
+          spk_version = os.environ['SPK_VERSION']
+          version = os.environ['VERSION']
+          repo = os.environ['REPO']
+          spk_size = int(os.environ['SPK_SIZE'])
+          spk_md5 = os.environ['SPK_MD5']
+          feed = {
+            "packages": [{
+              "id": "immich",
+              "package": "immich",
+              "version": spk_version,
+              "dname": "Immich",
+              "desc": "High-performance self-hosted photo and video management solution.",
+              "price": 0,
+              "download_count": 0,
+              "link": f"https://github.com/{repo}/releases/download/v{spk_version}/immich-x86_64-{spk_version}.spk",
+              "size": spk_size,
+              "md5": spk_md5,
+              "thumbnail": [],
+              "snapshot": [],
+              "qinst": True,
+              "qstart": True,
+              "qupgrade": True,
+              "deppkgs": "",
+              "conflictpkgs": "",
+              "start": True,
+              "adminurl": "/",
+              "adminprotocol": "http",
+              "adminport": "2284",
+              "maintainer": "SLR Software Inc.",
+              "distributor": "mr-narender",
+              "distributor_url": f"https://github.com/{repo}",
+              "changelog": f"Immich v{version}"
+            }]
+          }
+          pathlib.Path('packages.json').write_text(json.dumps(feed, indent=2) + '\n')
+          print('packages.json updated')
+          PYEOF
+        env:
+          SPK_SIZE: ${{ env.SPK_SIZE }}
+          SPK_MD5: ${{ env.SPK_MD5 }}
+          REPO: ${{ github.repository }}
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add syno/INFO packages.json immich
+          git diff --cached --quiet || git commit -m "chore: release v${SPK_VERSION}"
+          git push
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.SPK_VERSION }}
+          name: Immich v${{ env.VERSION }} for Synology NAS
+          body: |
+            ## Immich v${{ env.VERSION }} — Synology NAS Package
+
+            ### Install / Upgrade
+
+            **Via Package Center (recommended after one-time source setup):**
+            Package Center will show this as an available update automatically.
+
+            **Manual install:**
+            Download the `.spk` file below → DSM Package Center → Manual Install.
+
+            ### One-time Package Center setup
+            DSM → Package Center → Settings → Package Sources → Add:
+            ```
+            https://raw.githubusercontent.com/${{ github.repository }}/main/packages.json
+            ```
+
+            ### Machine Learning
+            ML runs separately on a Docker-capable host:
+            ```bash
+            docker run -d --name immich-ml -p 3003:3003 \
+              -v immich-ml-cache:/cache \
+              -e MACHINE_LEARNING_CACHE_FOLDER=/cache \
+              --restart unless-stopped \
+              ghcr.io/immich-app/immich-machine-learning:v${{ env.VERSION }}
+            ```
+            Configure the ML URL via the config UI at `http://<NAS-IP>:2284`.
+          files: immich-x86_64-${{ env.SPK_VERSION }}.spk
+          fail_on_unmatched_files: true
+          make_latest: true

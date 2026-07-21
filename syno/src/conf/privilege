@@ -1,0 +1,17 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "immich",
+  "groupname": "immich",
+  "extra-groups": [
+    "http",
+    "users"
+  ],
+  "create-user": {
+    "uid": 1040,
+    "shell": "/bin/false",
+    "no-login": true,
+    "comment": "Immich service account"
+  }
+}

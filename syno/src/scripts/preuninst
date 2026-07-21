@@ -1,0 +1,6 @@
+#!/bin/sh
+# preuninst — runs before the package is removed. DSM stops the package first
+# (start-stop-status stop → graceful postgres/redis shutdown), so this is a
+# best-effort safety net only. Never deletes data.
+synopkg stop immich 2>/dev/null || true
+exit 0

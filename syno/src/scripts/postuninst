@@ -1,0 +1,25 @@
+#!/bin/sh
+# postuninst — runs AFTER the package is removed.
+#
+# DATA-PRESERVING cleanup. We KEEP user data so a reinstall restores the library:
+#   - ${PKG_VAR}/pgdata           -> the PostgreSQL database (albums, metadata, faces)
+#   - UPLOAD_LOCATION (e.g. /volume1/docker/immich/upload) -> the actual photos/videos
+#     (lives OUTSIDE the package dir; never touched here)
+#
+# We remove only REGENERABLE caches to reclaim disk space (all rebuilt on next install):
+#   - ml-venv / uv-python / uv-cache  -> re-provisioned by uv on first run
+#   - redis                           -> ephemeral cache (save "" / appendonly no)
+#   - ports.env / run / log           -> runtime state
+PKG_VAR="/var/packages/immich/var"
+
+rm -rf \
+    "${PKG_VAR}/ml-venv" \
+    "${PKG_VAR}/uv-python" \
+    "${PKG_VAR}/uv-cache" \
+    "${PKG_VAR}/redis" \
+    "${PKG_VAR}/ports.env" \
+    2>/dev/null || true
+
+# pgdata is intentionally PRESERVED. To fully wipe the library, an admin can
+# manually remove ${PKG_VAR}/pgdata and the UPLOAD_LOCATION folder.
+exit 0

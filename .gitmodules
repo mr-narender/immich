@@ -1,0 +1,4 @@
+[submodule "immich"]
+	path = immich
+	url = https://github.com/immich-app/immich
+	shallow = true

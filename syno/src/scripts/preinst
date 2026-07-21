@@ -1,0 +1,9 @@
+#!/bin/sh
+# preinst — runs as root before package files are extracted.
+# NOTE: no internet/glibc gates here. DSM's preinst environment lacks ping/getconf
+# and blocks ICMP, so those checks false-failed on perfectly-online NASes and
+# aborted valid installs. The DSM-version floor is enforced by os_min_ver in INFO;
+# the internet requirement (ML/models/geodata) is handled at first run + documented.
+# Data dirs are created + chowned by postinst under the package-owned var dir
+# (DSM sandboxes preinst from arbitrary /volume1 paths). Nothing to do here.
+exit 0
