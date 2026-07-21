@@ -1,300 +1,470 @@
-name: Auto Release Synology SPK
+name: Auto Release
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # every 6 hours
+    - cron: '0 */6 * * *'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Force specific version (e.g. 3.0.2). Leave empty to auto-detect.'
-        required: false
-        type: string
+
+permissions:
+  contents: write
 
 jobs:
   detect:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.detect.outputs.version }}
-      spk_version: ${{ steps.detect.outputs.spk_version }}
-      should_release: ${{ steps.detect.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+      spk_version: ${{ steps.check.outputs.spk_version }}
+      should_release: ${{ steps.check.outputs.should_release }}
     steps:
-      - name: Detect latest Immich version
-        id: detect
+      - name: Detect latest Immich release
+        id: check
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION=$(python3 -c "
-          import urllib.request, json, ssl
-          ctx = ssl.create_default_context()
-          req = urllib.request.Request(
-            'https://api.github.com/repos/immich-app/immich/releases/latest',
-            headers={'User-Agent': 'mr-narender-immich-spk'}
-          )
-          data = json.loads(urllib.request.urlopen(req, context=ctx).read())
-          print(data['tag_name'].lstrip('v'))
-          ")
-          fi
-          SPK_VERSION="${VERSION}-1"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "spk_version=$SPK_VERSION" >> $GITHUB_OUTPUT
+          python3 - << 'PYEOF'
+          import urllib.request, urllib.error, json, os
 
-          # Check if release already exists
-          HTTP=$(python3 -c "
-          import urllib.request, ssl
-          ctx = ssl.create_default_context()
+          headers = {
+              'Accept': 'application/vnd.github.v3+json',
+              'User-Agent': 'github-actions-immich-spk',
+          }
+          token = os.environ.get('GITHUB_TOKEN', '')
+          if token:
+              headers['Authorization'] = 'token ' + token
+
+          req = urllib.request.Request(
+              'https://api.github.com/repos/immich-app/immich/releases/latest',
+              headers=headers,
+          )
+          with urllib.request.urlopen(req) as r:
+              data = json.loads(r.read())
+
+          version = data['tag_name'].lstrip('v')
+          spk_version = version + '-1'
+
+          exist_req = urllib.request.Request(
+              'https://api.github.com/repos/mr-narender/immich/releases/tags/v' + version,
+              headers=headers,
+          )
           try:
-            req = urllib.request.Request(
-              'https://api.github.com/repos/${{ github.repository }}/releases/tags/v${SPK_VERSION}',
-              headers={'User-Agent': 'mr-narender-immich-spk'}
-            )
-            urllib.request.urlopen(req, context=ctx)
-            print('200')
+              with urllib.request.urlopen(exist_req) as r:
+                  r.read()
+              should_release = 'false'
+              print('Release v' + version + ' already published — skipping')
           except urllib.error.HTTPError as e:
-            print(e.code)
-          ")
-          if [ "$HTTP" = "200" ]; then
-            echo "should_release=false" >> $GITHUB_OUTPUT
-            echo "Release v${SPK_VERSION} already exists — skipping."
-          else
-            echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "New version: v${VERSION} (SPK ${SPK_VERSION})"
-          fi
+              if e.code == 404:
+                  should_release = 'true'
+                  print('New Immich v' + version + ' — will build SPK')
+              else:
+                  raise
+
+          out = os.environ['GITHUB_OUTPUT']
+          with open(out, 'a') as f:
+              f.write('version=' + version + '\n')
+              f.write('spk_version=' + spk_version + '\n')
+              f.write('should_release=' + should_release + '\n')
+          PYEOF
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            node_arch: x64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            node_arch: arm64
+    runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.detect.outputs.version }}
       SPK_VERSION: ${{ needs.detect.outputs.spk_version }}
+      ARCH: ${{ matrix.arch }}
     steps:
-      - name: Checkout overlay repo
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
-      - name: Clone Immich source at tag
+      - name: Clone Immich source
         run: |
           git clone --depth 1 --branch "v${VERSION}" \
             https://github.com/immich-app/immich.git /tmp/immich-src
-          echo "Cloned v${VERSION}: $(git -C /tmp/immich-src rev-parse HEAD)"
 
-      - name: Update submodule pointer in repo
+      - name: Detect Node version
+        id: node_ver
         run: |
-          COMMIT=$(git -C /tmp/immich-src rev-parse HEAD)
-          git update-index --cacheinfo 160000,${COMMIT},immich
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          NODE_VER=24
+          if [ -f /tmp/immich-src/.nvmrc ]; then
+            NODE_VER=$(cat /tmp/immich-src/.nvmrc | tr -d 'v\n ')
+          fi
+          echo "node_version=${NODE_VER}" >> "$GITHUB_OUTPUT"
+          echo "Detected Node version: ${NODE_VER}"
 
-      - name: Setup Node.js 24
+      - name: Setup Node.js (build)
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: ${{ steps.node_ver.outputs.node_version }}
+          enable-corepack: true
 
-      - name: Enable corepack (pnpm from packageManager)
+      - name: Build server and web
+        working-directory: /tmp/immich-src
         run: |
-          corepack enable
-          cd /tmp/immich-src
           corepack prepare --activate
+          pnpm install --frozen-lockfile
+          pnpm --filter @immich/sdk build
+          pnpm --filter @immich/plugin-sdk build || true
+          pnpm --filter immich build
+          pnpm --filter immich-web build \
+            || pnpm --filter '@immich/web' build \
+            || true
+          rm -rf /tmp/server-deploy
+          pnpm --filter immich deploy --prod --legacy /tmp/server-deploy \
+            || pnpm --filter immich deploy --prod /tmp/server-deploy
 
-      - name: Build Immich (server + web)
-        working-directory: /tmp/immich-src
+      - name: Prune non-current-arch prebuilds
         run: |
-          pnpm install --frozen-lockfile > /tmp/immich-build.log 2>&1
-          pnpm --filter @immich/sdk build >> /tmp/immich-build.log 2>&1
-          pnpm --filter @immich/plugin-sdk build >> /tmp/immich-build.log 2>&1 || true
-          pnpm --filter immich build >> /tmp/immich-build.log 2>&1
-          pnpm --filter immich-web build >> /tmp/immich-build.log 2>&1
-          echo "Build complete. Last 5 lines:"
-          tail -5 /tmp/immich-build.log
+          find /tmp/server-deploy -name "*.node" | while read f; do
+            base=$(basename "$f")
+            drop=0
+            echo "$base" | grep -qE '(darwin|win32|linuxmusl)' && drop=1
+            [ "$ARCH" = "x86_64" ] && echo "$base" | grep -qE '(arm64|aarch64)' && drop=1
+            [ "$ARCH" = "arm64"  ] && echo "$base" | grep -qE '(x64|ia32|x86_64)' && drop=1
+            if [ "$drop" = "1" ]; then
+              echo "  prune: $f"
+              rm -f "$f"
+            fi
+          done
 
-      - name: Deploy server (prod node_modules)
-        working-directory: /tmp/immich-src
+      - name: Verify sharp
+        working-directory: /tmp/server-deploy
+        run: node -e "require('sharp'); console.log('SHARP_OK')"
+
+      - name: Package server and web tarballs
         run: |
-          pnpm --filter immich deploy --prod --legacy /tmp/server-deploy >> /tmp/immich-build.log 2>&1 \
-            || pnpm --filter immich deploy --prod /tmp/server-deploy >> /tmp/immich-build.log 2>&1
-          test -f /tmp/server-deploy/dist/main.js || test -f /tmp/server-deploy/dist/main \
-            || { echo "DIST_MISSING"; tail -30 /tmp/immich-build.log; exit 1; }
-          node -e "require('sharp'); console.log('SHARP_OK', require('sharp/package.json').version)" \
-            || { echo "SHARP_LOAD_FAIL"; exit 1; }
+          mkdir -p /tmp/build-out
+          COPYFILE_DISABLE=1 tar czf "/tmp/build-out/server-linux-${ARCH}.tar.gz" \
+            -C /tmp/server-deploy .
+          WEB_BUILD=""
+          for d in \
+            /tmp/immich-src/app/web/build \
+            /tmp/immich-src/web/build \
+            /tmp/immich-src/apps/web/build; do
+            if [ -d "$d" ]; then
+              WEB_BUILD="$d"
+              break
+            fi
+          done
+          if [ -z "$WEB_BUILD" ]; then
+            WEB_BUILD=$(find /tmp/immich-src -name "index.html" \
+              -path "*/build/*" -print -quit | xargs dirname 2>/dev/null || true)
+          fi
+          [ -z "$WEB_BUILD" ] && { echo "FATAL: web build output not found"; exit 1; }
+          echo "Web build dir: $WEB_BUILD"
+          COPYFILE_DISABLE=1 tar czf "/tmp/build-out/web-build.tar.gz" -C "$WEB_BUILD" .
 
-      - name: Prune non-linux-x64 native prebuilds
-        working-directory: /tmp/server-deploy/node_modules
+      - name: Download Node.js runtime
         run: |
-          find . -type d \( -name '*darwin*' -o -name '*win32*' -o -name '*linuxmusl*' \
-            -o -name '*linux-arm' -o -name '*linux-arm64' -o -name '*linux-s390x' \
-            -o -name '*linux-ppc64*' -o -name '*android*' -o -name '*freebsd*' \) \
-            -exec rm -rf {} + 2>/dev/null || true
-          find . -type f \( -name '*.map' -o -name '*.markdown' \) -delete 2>/dev/null || true
-          find . -type d -name '.github' -exec rm -rf {} + 2>/dev/null || true
+          mkdir -p /tmp/node-out
+          python3 - << 'PYEOF'
+          import urllib.request, json, os
 
-      - name: Package server tarball
-        run: |
-          mkdir -p /tmp/immich-spk-work
-          tar czf /tmp/immich-spk-work/server-linux-x64.tar.gz -C /tmp/server-deploy .
-          echo "Server tar: $(du -sh /tmp/immich-spk-work/server-linux-x64.tar.gz | cut -f1)"
+          node_arch = os.environ['NODE_ARCH']
+          linux_arch = 'arm64' if node_arch == 'arm64' else 'x64'
 
-      - name: Package web tarball
-        run: |
-          WEB_SRC=/tmp/immich-src/web
-          BUILD_DIR=""
-          [ -d "$WEB_SRC/build" ] && BUILD_DIR="build"
-          [ -d "$WEB_SRC/dist" ] && BUILD_DIR="dist"
-          [ -z "$BUILD_DIR" ] && { echo "No web build dir found"; ls "$WEB_SRC"; exit 1; }
-          tar czf /tmp/immich-spk-work/web-build.tar.gz -C "$WEB_SRC" "$BUILD_DIR"
-          echo "Web tar: $(du -sh /tmp/immich-spk-work/web-build.tar.gz | cut -f1)"
+          import sys
 
-      - name: Download base SPK (binary deps — postgres/redis/node/geodata)
-        run: |
-          python3 -c "
-          import urllib.request, ssl
-          ctx = ssl.create_default_context()
-          req = urllib.request.Request(
-            'https://github.com/${{ github.repository }}/releases/download/base-deps-2.7.5/immich-x86_64-2.7.5-1.spk',
-            headers={'User-Agent': 'mr-narender-immich-spk'}
-          )
-          with urllib.request.urlopen(req, context=ctx) as r, open('immich-x86_64-2.7.5-1.spk', 'wb') as f:
-            f.write(r.read())
-          "
-          echo "Base SPK: $(du -sh immich-x86_64-2.7.5-1.spk | cut -f1)"
+          with urllib.request.urlopen('https://nodejs.org/dist/index.json') as r:
+              releases = json.loads(r.read())
 
-      - name: Patch syno/INFO
-        run: |
-          CHANGELOG=$(python3 -c "
-          import urllib.request, json, ssl
-          ctx = ssl.create_default_context()
-          req = urllib.request.Request(
-            'https://api.github.com/repos/immich-app/immich/releases/tags/v${VERSION}',
-            headers={'User-Agent': 'mr-narender-immich-spk'}
-          )
-          try:
-            data = json.loads(urllib.request.urlopen(req, context=ctx).read())
-            body = data.get('body', '')
-            lines = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith('#')]
-            print(lines[0][:120] if lines else 'Immich v${VERSION}')
-          except Exception:
-            print('Immich v${VERSION}')
-          " 2>/dev/null || echo "Immich v${VERSION}")
+          v24 = next((rel for rel in releases if rel['version'].startswith('v24.')), None)
+          if v24 is None:
+              sys.exit('No v24.x Node.js release found in nodejs.org index')
+          ver = v24['version']
+          filename = 'node-' + ver + '-linux-' + linux_arch + '.tar.xz'
+          url = 'https://nodejs.org/dist/' + ver + '/' + filename
 
-          python3 - <<'PYEOF'
-          import re, pathlib, os
-          info = pathlib.Path('syno/INFO')
-          text = info.read_text()
-          version = os.environ['SPK_VERSION']
-          immich_version = os.environ['VERSION']
-          changelog = os.environ.get('CHANGELOG', f'Immich v{immich_version}')
-          text = re.sub(r'^version="[^"]*"', f'version="{version}"', text, flags=re.M)
-          text = re.sub(r'^changelog="[^"]*"', f'changelog="Immich v{immich_version} — {changelog}"', text, flags=re.M)
-          info.write_text(text)
-          print('INFO patched to', version)
+          print('Downloading ' + url)
+          out_path = '/tmp/node-out/' + filename
+          with urllib.request.urlopen(url) as resp, open(out_path, 'wb') as fout:
+              fout.write(resp.read())
+
+          with open(os.environ['GITHUB_ENV'], 'a') as envf:
+              envf.write('NODE_FILENAME=' + filename + '\n')
+
+          print('Saved: ' + filename + ' (' + str(os.path.getsize(out_path)) + ' bytes)')
           PYEOF
         env:
-          CHANGELOG: ${{ env.CHANGELOG }}
+          NODE_ARCH: ${{ matrix.node_arch }}
+
+      - name: Build Redis 7.2.7 (static musl)
+        run: |
+          sudo apt-get install -y --no-install-recommends musl-tools
+          mkdir -p /tmp/redis-src /tmp/redis-out
+          python3 - << 'PYEOF'
+          import urllib.request, os
+
+          url = 'https://download.redis.io/releases/redis-7.2.7.tar.gz'
+          out = '/tmp/redis-src/redis-7.2.7.tar.gz'
+          print('Downloading Redis 7.2.7...')
+          with urllib.request.urlopen(url) as r, open(out, 'wb') as f:
+              f.write(r.read())
+          print('Downloaded: ' + str(os.path.getsize(out)) + ' bytes')
+          PYEOF
+          cd /tmp/redis-src
+          tar xzf redis-7.2.7.tar.gz
+          cd redis-7.2.7
+          make -j$(nproc) \
+            CC=musl-gcc \
+            LDFLAGS="-static" \
+            MALLOC=libc \
+            redis-server redis-cli
+          file src/redis-server
+          mkdir -p /tmp/redis-out/bin
+          cp src/redis-server /tmp/redis-out/bin/
+          cp src/redis-cli    /tmp/redis-out/bin/
+          COPYFILE_DISABLE=1 tar czf "/tmp/redis-out/redis-${ARCH}.tar.gz" \
+            -C /tmp/redis-out bin/
+          echo "Redis tarball: $(du -h /tmp/redis-out/redis-${ARCH}.tar.gz | cut -f1)"
+
+      - name: Cache PostgreSQL + pgvector
+        id: pg_cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/pg-out
+          key: postgres-14-pgvector-0.8.0-${{ matrix.arch }}
+
+      - name: Build PostgreSQL 14 + pgvector (x86_64 / centos:7)
+        if: steps.pg_cache.outputs.cache-hit != 'true' && matrix.arch == 'x86_64'
+        run: |
+          mkdir -p /tmp/pg-out
+          cat > /tmp/Dockerfile.pg << 'DOCKEREOF'
+          FROM centos:7
+          RUN sed -i 's/mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/CentOS-Base.repo && \
+              sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' \
+                  /etc/yum.repos.d/CentOS-Base.repo && \
+              yum -y install \
+                  https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm && \
+              yum -y install postgresql14-server postgresql14-devel gcc make git && \
+              yum clean all
+          RUN git clone --branch v0.8.0 --depth 1 \
+                  https://github.com/pgvector/pgvector.git /tmp/pgvector && \
+              cd /tmp/pgvector && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config install
+          RUN mkdir -p /out && \
+              tar czf /out/postgres-x86_64.tar.gz \
+                  -C /usr/pgsql-14 bin/ lib/ share/ include/
+          DOCKEREOF
+          docker build --platform linux/amd64 -f /tmp/Dockerfile.pg -t pg-builder-x86 /tmp
+          docker create --name pg-ext-x86 pg-builder-x86
+          docker cp pg-ext-x86:/out/postgres-x86_64.tar.gz /tmp/pg-out/
+          docker rm pg-ext-x86
+          echo "PG tarball: $(du -h /tmp/pg-out/postgres-x86_64.tar.gz | cut -f1)"
+
+      - name: Build PostgreSQL 14 + pgvector (arm64 / almalinux:8)
+        if: steps.pg_cache.outputs.cache-hit != 'true' && matrix.arch == 'arm64'
+        run: |
+          mkdir -p /tmp/pg-out
+          cat > /tmp/Dockerfile.pg << 'DOCKEREOF'
+          FROM arm64v8/almalinux:8
+          RUN dnf -y install \
+                  https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-aarch64/pgdg-redhat-repo-latest.noarch.rpm && \
+              dnf -y module disable postgresql && \
+              dnf -y install postgresql14-server postgresql14-devel gcc make git && \
+              dnf clean all
+          RUN git clone --branch v0.8.0 --depth 1 \
+                  https://github.com/pgvector/pgvector.git /tmp/pgvector && \
+              cd /tmp/pgvector && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config install
+          RUN mkdir -p /out && \
+              tar czf /out/postgres-arm64.tar.gz \
+                  -C /usr/pgsql-14 bin/ lib/ share/ include/
+          DOCKEREOF
+          docker build --platform linux/arm64 -f /tmp/Dockerfile.pg -t pg-builder-arm64 /tmp
+          docker create --name pg-ext-arm64 pg-builder-arm64
+          docker cp pg-ext-arm64:/out/postgres-arm64.tar.gz /tmp/pg-out/
+          docker rm pg-ext-arm64
+          echo "PG tarball: $(du -h /tmp/pg-out/postgres-arm64.tar.gz | cut -f1)"
+
+      - name: Extract geodata
+        run: |
+          mkdir -p /tmp/geodata-out
+          GEODATA=$(find /tmp/immich-src -name "cities500.txt" -print -quit 2>/dev/null)
+          if [ -z "$GEODATA" ]; then
+            GEODATA=$(find /tmp/immich-src/server -name "*.txt" -print -quit 2>/dev/null)
+          fi
+          if [ -z "$GEODATA" ]; then
+            echo "WARN: cities500.txt not found; continuing with empty geodata-out"
+          else
+            GEODATA_DIR=$(dirname "$GEODATA")
+            echo "Geodata dir: $GEODATA_DIR"
+            cp "$GEODATA_DIR"/* /tmp/geodata-out/
+            ls -lh /tmp/geodata-out/
+          fi
 
       - name: Assemble SPK
         run: |
           REPO="$(pwd)" \
           VERSION="${SPK_VERSION}" \
-          BASE_SPK="$(pwd)/immich-x86_64-2.7.5-1.spk" \
-          OUT_SPK="$(pwd)/immich-x86_64-${SPK_VERSION}.spk" \
-          SERVER_TAR="/tmp/immich-spk-work/server-linux-x64.tar.gz" \
-          WEB_TAR="/tmp/immich-spk-work/web-build.tar.gz" \
-          COPYFILE_DISABLE=1 \
-          bash syno/assemble-hybrid.sh
-          echo "SPK: $(du -sh immich-x86_64-${SPK_VERSION}.spk | cut -f1)"
+          ARCH="${ARCH}" \
+          POSTGRES_TAR="/tmp/pg-out/postgres-${ARCH}.tar.gz" \
+          REDIS_TAR="/tmp/redis-out/redis-${ARCH}.tar.gz" \
+          NODE_TAR="/tmp/node-out/${NODE_FILENAME}" \
+          GEODATA_DIR="/tmp/geodata-out" \
+          SERVER_TAR="/tmp/build-out/server-linux-${ARCH}.tar.gz" \
+          WEB_TAR="/tmp/build-out/web-build.tar.gz" \
+          OUT_SPK="$(pwd)/immich-${ARCH}-${SPK_VERSION}.spk" \
+          bash syno/assemble-standalone.sh
 
-      - name: Update packages.json feed
+      - name: Upload SPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spk-${{ matrix.arch }}
+          path: immich-${{ matrix.arch }}-${{ needs.detect.outputs.spk_version }}.spk
+          if-no-files-found: error
+
+  release:
+    needs: [detect, build]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
+      SPK_VERSION: ${{ needs.detect.outputs.spk_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download SPK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Locate SPK files
         run: |
-          SPK_SIZE=$(stat -c%s "immich-x86_64-${SPK_VERSION}.spk")
-          SPK_MD5=$(md5sum "immich-x86_64-${SPK_VERSION}.spk" | cut -d' ' -f1)
-          REPO="${{ github.repository }}"
-          python3 - <<PYEOF
-          import json, pathlib, os
-          spk_version = os.environ['SPK_VERSION']
-          version = os.environ['VERSION']
-          repo = os.environ['REPO']
-          spk_size = int(os.environ['SPK_SIZE'])
-          spk_md5 = os.environ['SPK_MD5']
+          X86_SPK=$(find artifacts/ -name "immich-x86_64-*.spk" | head -1)
+          ARM64_SPK=$(find artifacts/ -name "immich-arm64-*.spk" | head -1)
+          [ -z "$X86_SPK"   ] && { echo "FATAL: x86_64 SPK artifact not found"; exit 1; }
+          [ -z "$ARM64_SPK" ] && { echo "FATAL: arm64 SPK artifact not found";  exit 1; }
+          echo "X86_SPK=${X86_SPK}"                         >> "$GITHUB_ENV"
+          echo "ARM64_SPK=${ARM64_SPK}"                     >> "$GITHUB_ENV"
+          echo "X86_SPK_NAME=$(basename "${X86_SPK}")"       >> "$GITHUB_ENV"
+          echo "ARM64_SPK_NAME=$(basename "${ARM64_SPK}")"   >> "$GITHUB_ENV"
+
+      - name: Update packages.json
+        run: |
+          python3 - << 'PYEOF'
+          import json, os
+
+          version      = os.environ['VERSION']
+          spk_version  = os.environ['SPK_VERSION']
+          x86_name     = os.environ['X86_SPK_NAME']
+          arm64_name   = os.environ['ARM64_SPK_NAME']
+          repo         = 'mr-narender/immich'
+
+          base_url = 'https://github.com/' + repo + '/releases/download/v' + version + '/'
+
           feed = {
-            "packages": [{
-              "id": "immich",
-              "package": "immich",
-              "version": spk_version,
-              "dname": "Immich",
-              "desc": "High-performance self-hosted photo and video management solution.",
-              "price": 0,
-              "download_count": 0,
-              "link": f"https://github.com/{repo}/releases/download/v{spk_version}/immich-x86_64-{spk_version}.spk",
-              "size": spk_size,
-              "md5": spk_md5,
-              "thumbnail": [],
-              "snapshot": [],
-              "qinst": True,
-              "qstart": True,
-              "qupgrade": True,
-              "deppkgs": "",
-              "conflictpkgs": "",
-              "start": True,
-              "adminurl": "/",
-              "adminprotocol": "http",
-              "adminport": "2284",
-              "maintainer": "SLR Software Inc.",
-              "distributor": "mr-narender",
-              "distributor_url": f"https://github.com/{repo}",
-              "changelog": f"Immich v{version}"
-            }]
+              'packages': [{
+                  'id': 'immich',
+                  'package': 'immich',
+                  'version': spk_version,
+                  'dname': 'Immich',
+                  'desc': 'High-performance self-hosted photo and video management solution.',
+                  'price': 0,
+                  'download_count': 0,
+                  'link': base_url + x86_name,
+                  'qinst': True,
+                  'qstart': True,
+                  'qupgrade': True,
+                  'deppkgs': '',
+                  'conflictpkgs': '',
+                  'start': True,
+                  'adminurl': '/',
+                  'adminprotocol': 'http',
+                  'adminport': '2284',
+                  'maintainer': 'SLR Software Inc.',
+                  'distributor': 'mr-narender',
+                  'distributor_url': 'https://github.com/' + repo,
+                  'changelog': 'Immich v' + version,
+              }]
           }
-          pathlib.Path('packages.json').write_text(json.dumps(feed, indent=2) + '\n')
-          print('packages.json updated')
-          PYEOF
-        env:
-          SPK_SIZE: ${{ env.SPK_SIZE }}
-          SPK_MD5: ${{ env.SPK_MD5 }}
-          REPO: ${{ github.repository }}
 
-      - name: Commit version bump
+          with open('packages.json', 'w') as f:
+              json.dump(feed, f, indent=2)
+              f.write('\n')
+
+          print('packages.json updated: version=' + version)
+          print('  x86_64 link: ' + base_url + x86_name)
+          PYEOF
+
+      - name: Update syno/INFO version
         run: |
-          git config user.name "github-actions[bot]"
+          python3 - << 'PYEOF'
+          import re, os
+
+          spk_version = os.environ['SPK_VERSION']
+
+          with open('syno/INFO') as f:
+              content = f.read()
+
+          content = re.sub(r'^version=.*$', 'version=' + spk_version,
+                           content, flags=re.MULTILINE)
+
+          with open('syno/INFO', 'w') as f:
+              f.write(content)
+
+          print('syno/INFO updated: version=' + spk_version)
+          PYEOF
+
+      - name: Commit and push metadata
+        run: |
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add syno/INFO packages.json immich
-          git diff --cached --quiet || git commit -m "chore: release v${SPK_VERSION}"
-          git push
+          git diff --quiet || git stash
+          git pull --rebase origin main
+          git stash list | grep -q 'stash@{0}' && git stash pop || true
+          git add packages.json syno/INFO
+          git diff --staged --quiet || \
+            git commit -m "chore: bump to Immich v${VERSION} (SPK ${SPK_VERSION})"
+          git push origin main
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.SPK_VERSION }}
-          name: Immich v${{ env.VERSION }} for Synology NAS
+          tag_name: v${{ needs.detect.outputs.version }}
+          name: Immich ${{ needs.detect.outputs.version }} for Synology
           body: |
-            ## Immich v${{ env.VERSION }} — Synology NAS Package
+            ## Immich ${{ needs.detect.outputs.version }} for Synology DSM
 
-            ### Install / Upgrade
+            Built from scratch — no base SPK dependency.
 
-            **Via Package Center (recommended after one-time source setup):**
-            Package Center will show this as an available update automatically.
+            **Bundled components:**
+            - Node.js v24 (latest patch)
+            - PostgreSQL 14 + pgvector 0.8.0
+            - Redis 7.2.7 (static musl binary)
 
-            **Manual install:**
-            Download the `.spk` file below → DSM Package Center → Manual Install.
+            ### Downloads
 
-            ### One-time Package Center setup
-            DSM → Package Center → Settings → Package Sources → Add:
+            | Architecture | File |
+            |---|---|
+            | x86\_64 (Intel/AMD) | `${{ env.X86_SPK_NAME }}` |
+            | arm64 | `${{ env.ARM64_SPK_NAME }}` |
+
+            ### Install
+            DSM → Package Center → Manual Install → select SPK → Next.
+
+            ### Package feed (auto-update)
+            Package Center → Settings → Package Sources → Add:
             ```
-            https://raw.githubusercontent.com/${{ github.repository }}/main/packages.json
+            https://raw.githubusercontent.com/mr-narender/immich/main/packages.json
             ```
-
-            ### Machine Learning
-            ML runs separately on a Docker-capable host:
-            ```bash
-            docker run -d --name immich-ml -p 3003:3003 \
-              -v immich-ml-cache:/cache \
-              -e MACHINE_LEARNING_CACHE_FOLDER=/cache \
-              --restart unless-stopped \
-              ghcr.io/immich-app/immich-machine-learning:v${{ env.VERSION }}
-            ```
-            Configure the ML URL via the config UI at `http://<NAS-IP>:2284`.
-          files: immich-x86_64-${{ env.SPK_VERSION }}.spk
-          fail_on_unmatched_files: true
-          make_latest: true
+          files: |
+            ${{ env.X86_SPK }}
+            ${{ env.ARM64_SPK }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
