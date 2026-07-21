@@ -204,6 +204,7 @@ jobs:
         run: |
           mkdir -p /tmp/redis-out/bin
           docker run --rm \
+            --hostname ci-build \
             -v /tmp/redis-out/bin:/out \
             alpine:3.19 \
             sh -c '
