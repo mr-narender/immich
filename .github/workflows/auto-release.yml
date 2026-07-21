@@ -240,12 +240,13 @@ jobs:
           mkdir -p /tmp/pg-out
           cat > /tmp/Dockerfile.pg << 'DOCKEREOF'
           FROM centos:7
-          RUN sed -i 's/mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/CentOS-Base.repo && \
+          RUN sed -i 's/mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/CentOS-*.repo && \
               sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' \
-                  /etc/yum.repos.d/CentOS-Base.repo && \
+                  /etc/yum.repos.d/CentOS-*.repo && \
+              yum -y install centos-release-scl && \
               yum -y install \
                   https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm && \
-              yum -y --disablerepo='pgdg*' --enablerepo='pgdg14' install postgresql14-server postgresql14-devel gcc make git && \
+              yum -y --disablerepo='pgdg*' --enablerepo='pgdg14,pgdg-common' install postgresql14-server postgresql14-devel gcc make git && \
               yum clean all
           RUN git clone --branch v0.8.0 --depth 1 \
                   https://github.com/pgvector/pgvector.git /tmp/pgvector && \
