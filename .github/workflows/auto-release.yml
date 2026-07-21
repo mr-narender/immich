@@ -222,6 +222,8 @@ jobs:
             CC=musl-gcc \
             LDFLAGS="-static" \
             MALLOC=libc \
+            REDIS_CFLAGS= \
+            REDIS_LDFLAGS= \
             redis-server redis-cli
           file src/redis-server
           mkdir -p /tmp/redis-out/bin
