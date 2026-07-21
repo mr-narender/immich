@@ -108,11 +108,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ steps.node_ver.outputs.node_version }}
-          enable-corepack: true
 
       - name: Build server and web
         working-directory: /tmp/immich-src
         run: |
+          corepack enable
           corepack prepare --activate
           pnpm install --frozen-lockfile
           pnpm --filter @immich/sdk build
