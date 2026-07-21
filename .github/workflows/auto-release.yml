@@ -207,10 +207,11 @@ jobs:
           python3 - << 'PYEOF'
           import urllib.request, os
 
-          url = 'https://download.redis.io/releases/redis-7.2.7.tar.gz'
+          url = 'https://github.com/redis/redis/archive/refs/tags/7.2.7.tar.gz'
           out = '/tmp/redis-src/redis-7.2.7.tar.gz'
-          print('Downloading Redis 7.2.7...')
-          with urllib.request.urlopen(url) as r, open(out, 'wb') as f:
+          req = urllib.request.Request(url, headers={'User-Agent': 'github-actions-immich-spk/1.0'})
+          print('Downloading Redis 7.2.7 from GitHub...')
+          with urllib.request.urlopen(req) as r, open(out, 'wb') as f:
               f.write(r.read())
           print('Downloaded: ' + str(os.path.getsize(out)) + ' bytes')
           PYEOF
