@@ -232,7 +232,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/pg-out
-          key: postgres-14-pgvector-0.8.0-v2-${{ matrix.arch }}
+          key: postgres-14-pgvector-0.8.0-v3-${{ matrix.arch }}
 
       - name: Build PostgreSQL 14 + pgvector (x86_64 / centos:7)
         if: steps.pg_cache.outputs.cache-hit != 'true' && matrix.arch == 'x86_64'
@@ -255,8 +255,8 @@ jobs:
           RUN git clone --branch v0.8.0 --depth 1 \
                   https://github.com/pgvector/pgvector.git /tmp/pgvector && \
               cd /tmp/pgvector && \
-              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config && \
-              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config install
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no install
           RUN mkdir -p /out && \
               tar czf /out/postgres-x86_64.tar.gz \
                   -C /usr/pgsql-14 bin/ lib/ share/ include/
@@ -281,8 +281,8 @@ jobs:
           RUN git clone --branch v0.8.0 --depth 1 \
                   https://github.com/pgvector/pgvector.git /tmp/pgvector && \
               cd /tmp/pgvector && \
-              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config && \
-              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config install
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no install
           RUN mkdir -p /out && \
               tar czf /out/postgres-arm64.tar.gz \
                   -C /usr/pgsql-14 bin/ lib/ share/ include/
