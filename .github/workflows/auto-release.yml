@@ -232,7 +232,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/pg-out
-          key: postgres-14-pgvector-0.8.0-v3-${{ matrix.arch }}
+          key: postgres-14-pgvector-0.8.0-v4-${{ matrix.arch }}
 
       - name: Build PostgreSQL 14 + pgvector (x86_64 / centos:7)
         if: steps.pg_cache.outputs.cache-hit != 'true' && matrix.arch == 'x86_64'
@@ -246,7 +246,7 @@ jobs:
               yum -y install \
                   https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm && \
               yum -y --disablerepo='*' --enablerepo='base,extras,updates,pgdg14,pgdg-common' \
-                  install postgresql14-server gcc make git yum-utils && \
+                  install postgresql14-server gcc make git yum-utils lz4 openssl-libs libicu && \
               mkdir -p /tmp/pgdevel && \
               yumdownloader --disablerepo='*' --enablerepo='pgdg14,pgdg-common' \
                   --destdir=/tmp/pgdevel postgresql14-devel && \
@@ -257,6 +257,9 @@ jobs:
               cd /tmp/pgvector && \
               make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no && \
               make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no install
+          RUN cp /usr/lib64/liblz4.so.1 /usr/lib64/libssl.so.10 /usr/lib64/libcrypto.so.10 \
+                  /usr/lib64/libicudata.so.50 /usr/lib64/libicui18n.so.50 /usr/lib64/libicuuc.so.50 \
+                  /usr/pgsql-14/lib/
           RUN mkdir -p /out && \
               tar czf /out/postgres-x86_64.tar.gz \
                   -C /usr/pgsql-14 bin/ lib/ share/ include/
@@ -423,17 +426,21 @@ jobs:
           import re, os
 
           spk_version = os.environ['SPK_VERSION']
+          version = os.environ['VERSION']
 
           with open('syno/INFO') as f:
               content = f.read()
 
           content = re.sub(r'^version=.*$', 'version=' + spk_version,
                            content, flags=re.MULTILINE)
+          content = re.sub(r'^changelog=.*$', 'changelog="Immich v' + version + '"',
+                           content, flags=re.MULTILINE)
 
           with open('syno/INFO', 'w') as f:
               f.write(content)
 
           print('syno/INFO updated: version=' + spk_version)
+          print('syno/INFO updated: changelog=Immich v' + version)
           PYEOF
 
       - name: Commit and push metadata
