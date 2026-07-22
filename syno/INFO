@@ -1,5 +1,5 @@
 package="immich"
-version="3.0.1-1"
+version=3.0.3-1
 arch="x86_64"
 maintainer="SLR Software Inc."
 displayname="Immich"
