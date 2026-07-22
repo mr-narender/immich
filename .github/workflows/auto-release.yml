@@ -285,8 +285,8 @@ jobs:
           RUN git clone --branch v0.8.0 --depth 1 \
                   https://github.com/pgvector/pgvector.git /tmp/pgvector && \
               cd /tmp/pgvector && \
-              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no && \
-              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no install
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no CFLAGS="-O2 -fPIC" && \
+              make USE_PGXS=1 PG_CONFIG=/usr/pgsql-14/bin/pg_config with_llvm=no CFLAGS="-O2 -fPIC" install
           RUN mkdir -p /out && \
               tar czf /out/postgres-arm64.tar.gz \
                   -C /usr/pgsql-14 bin/ lib/ share/ include/
