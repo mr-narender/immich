@@ -374,30 +374,38 @@ jobs:
 
           base_url = 'https://github.com/' + repo + '/releases/download/v' + version + '/'
 
+          common = {
+              'id': 'immich',
+              'package': 'immich',
+              'version': spk_version,
+              'dname': 'Immich',
+              'desc': 'High-performance self-hosted photo and video management solution.',
+              'price': 0,
+              'download_count': 0,
+              'qinst': True,
+              'qstart': True,
+              'qupgrade': True,
+              'deppkgs': '',
+              'conflictpkgs': '',
+              'start': True,
+              'adminurl': '/',
+              'adminprotocol': 'http',
+              'adminport': '2284',
+              'maintainer': 'SLR Software Inc.',
+              'distributor': 'mr-narender',
+              'distributor_url': 'https://github.com/' + repo,
+              'changelog': 'Immich v' + version,
+          }
+
           feed = {
-              'packages': [{
-                  'id': 'immich',
-                  'package': 'immich',
-                  'version': spk_version,
-                  'dname': 'Immich',
-                  'desc': 'High-performance self-hosted photo and video management solution.',
-                  'price': 0,
-                  'download_count': 0,
-                  'link': base_url + x86_name,
-                  'qinst': True,
-                  'qstart': True,
-                  'qupgrade': True,
-                  'deppkgs': '',
-                  'conflictpkgs': '',
-                  'start': True,
-                  'adminurl': '/',
-                  'adminprotocol': 'http',
-                  'adminport': '2284',
-                  'maintainer': 'SLR Software Inc.',
-                  'distributor': 'mr-narender',
-                  'distributor_url': 'https://github.com/' + repo,
-                  'changelog': 'Immich v' + version,
-              }]
+              'packages': [
+                  dict(common,
+                       arch='x86_64 bromolow cedarview avoton grantley broadwell broadwellnk broadwellnkv2 broadwellds apollolake denverton purley coffeelake skylaked geminilake v1000 r1000 epyc7002',
+                       link=base_url + x86_name),
+                  dict(common,
+                       arch='rtd1296 rtd1619b armada37xx ac7613 ac7565',
+                       link=base_url + arm64_name),
+              ]
           }
 
           with open('packages.json', 'w') as f:
@@ -406,6 +414,7 @@ jobs:
 
           print('packages.json updated: version=' + version)
           print('  x86_64 link: ' + base_url + x86_name)
+          print('  arm64  link: ' + base_url + arm64_name)
           PYEOF
 
       - name: Update syno/INFO version
