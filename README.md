@@ -6,6 +6,23 @@ Builds are triggered automatically every 6 hours. New upstream Immich releases p
 
 ---
 
+## Disclaimer & Credits
+
+**I am not affiliated with the Immich project in any way.**
+
+All credit for the application itself belongs entirely to the [immich-app](https://github.com/immich-app) team and its contributors — they built something remarkable and I deeply respect their work.
+
+What this repo provides is purely a **packaging layer**: a way to install Immich on a Synology NAS as a native package (SPK) without running Docker on the NAS itself. The Immich source code is untouched — only the Synology wrapper scripts and CI automation live here.
+
+This is shared freely for anyone who finds it useful. If you want to support the effort that went into building and maintaining this packaging:
+
+- [Buy Me a Coffee ☕](https://buymeacoffee.com/mr.narender)
+- [GitHub Sponsors ❤️](https://github.com/sponsors/mr-narender)
+
+For Immich itself — support their project directly at [immich.app](https://immich.app).
+
+---
+
 ## Install via Package Center (recommended)
 
 1. DSM → Package Center → Settings → Package Sources → Add:
