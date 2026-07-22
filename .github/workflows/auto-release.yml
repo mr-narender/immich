@@ -478,6 +478,9 @@ jobs:
             ```
             https://raw.githubusercontent.com/mr-narender/immich/main/packages.json
             ```
+
+            ### Support
+            If this saves you time — [Buy Me a Coffee ☕](https://buymeacoffee.com/mr.narender) · [GitHub Sponsors ❤️](https://github.com/sponsors/mr-narender)
           files: |
             ${{ env.X86_SPK }}
             ${{ env.ARM64_SPK }}
