@@ -276,11 +276,11 @@ jobs:
           RUN dnf -y install \
                   https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-aarch64/pgdg-redhat-repo-latest.noarch.rpm && \
               dnf -y module disable postgresql && \
-              dnf -y install postgresql14-server gcc make git yum-utils cpio && \
+              dnf -y install postgresql14-server gcc make git yum-utils && \
               mkdir -p /tmp/pgdevel && \
               yumdownloader --disablerepo='*' --enablerepo='pgdg14,pgdg-common' \
                   --destdir=/tmp/pgdevel postgresql14-devel && \
-              cd / && rpm2cpio /tmp/pgdevel/postgresql14-devel*.rpm | cpio -idmv && \
+              rpm -i --nodeps /tmp/pgdevel/postgresql14-devel*.rpm && \
               dnf clean all
           RUN git clone --branch v0.8.0 --depth 1 \
                   https://github.com/pgvector/pgvector.git /tmp/pgvector && \
