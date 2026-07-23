@@ -23,6 +23,26 @@ For Immich itself — support their project directly at [immich.app](https://imm
 
 ---
 
+## Why this package vs SynoCommunity's Immich package
+
+[SynoCommunity](https://synocommunity.com/package/immich) also publishes an Immich SPK — it is well-maintained and the right choice if you already use their ecosystem.
+
+This package takes a different approach:
+
+| | This package | SynoCommunity |
+|---|---|---|
+| Pre-requisites | None — fully self-contained | 6 packages required (Node.js, PostgreSQL, Redis, Perl, Python, ffmpeg) |
+| ML inference | Offloaded to external Docker host (GPU-capable) | Runs on the NAS itself (NAS CPU only) |
+| NAS RAM impact | Zero ML load — NAS stays fast | ML inference competes with Immich for NAS RAM |
+| PostgreSQL | Bundled PG14 + pgvector, version-pinned | Depends on SynoCommunity's postgres (version drift risk) |
+| Auto-updates | Within 6 hours of each Immich release | Manual — maintainer driven |
+
+**Choose this package if:** you want a zero-dependency drop-in, don't want ML burning NAS resources, or want faster release tracking.
+
+**Choose SynoCommunity if:** you already have their ecosystem installed and want on-NAS ML without an external machine.
+
+---
+
 ## Install via Package Center (recommended)
 
 1. DSM → Package Center → Settings → Package Sources → Add:
@@ -46,17 +66,54 @@ DSM → Package Center → Manual Install → upload the `.spk`.
 
 ## Machine Learning (optional)
 
-ML inference runs on a separate Docker-capable host (not the NAS itself):
+Immich ML powers face recognition, semantic search ("dog on beach"), and object/scene tagging. This package deliberately does **not** run ML on the NAS — NAS CPUs (Celeron, Atom) lack the AVX2 instructions needed for fast inference, and ML models consume 2–4 GB of RAM that competes with Immich, PostgreSQL, and Redis on a RAM-constrained device.
+
+Instead, ML runs on a separate Docker-capable host — any spare x86 machine, a mini PC, or a machine with an NVIDIA GPU for 10–100× faster processing of large libraries.
+
+### What works without ML
+
+Everything except smart features:
+
+| Feature | Needs ML? |
+|---|---|
+| Photo/video viewing, upload, backup | No |
+| Albums, sharing, timeline | No |
+| Map view (geodata bundled) | No |
+| Search by date, location, album | No |
+| Face recognition ("People" view) | **Yes** |
+| Smart/semantic search | **Yes** |
+| Object and scene auto-tagging | **Yes** |
+
+### Setup (CPU — any Docker host)
 
 ```bash
-docker run -d --name immich-ml -p 3003:3003 \
+docker run -d --name immich-ml \
+  -p 3003:3003 \
   -v immich-ml-cache:/cache \
   -e MACHINE_LEARNING_CACHE_FOLDER=/cache \
   --restart unless-stopped \
   ghcr.io/immich-app/immich-machine-learning:latest
 ```
 
-Enter the ML URL (`http://<docker-host-ip>:3003`) in the Immich config UI at `http://<NAS-IP>:2284`.
+### Setup (NVIDIA GPU — optional, 10–100× faster)
+
+```bash
+docker run -d --name immich-ml \
+  -p 3003:3003 \
+  -v immich-ml-cache:/cache \
+  -e MACHINE_LEARNING_CACHE_FOLDER=/cache \
+  --gpus all \
+  --restart unless-stopped \
+  ghcr.io/immich-app/immich-machine-learning:latest-cuda
+```
+
+### Connect to Immich
+
+In the Immich web UI at `http://<NAS-IP>:2284`:
+
+**Administration → Machine Learning Settings → URL** → set to `http://<docker-host-ip>:3003`
+
+The first run downloads models (~1.5 GB into the cache volume). Subsequent starts are instant.
 
 ---
 
