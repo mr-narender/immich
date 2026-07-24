@@ -139,6 +139,10 @@ printf '#!/bin/sh\nexit 0\n' > "$W/outer/scripts/preupgrade"
 printf '#!/bin/sh\nexit 0\n' > "$W/outer/scripts/postupgrade"
 chmod +x "$W/outer/scripts/preupgrade" "$W/outer/scripts/postupgrade"
 
+# [12b] outer conf/ (privilege, resource) — must be in outer SPK, not inside package.tgz
+echo "[12b] inject conf/ into outer SPK"
+[ -d "$REPO/syno/src/conf" ] && cp -r "$REPO/syno/src/conf" "$W/outer/conf"
+
 # [13] outer SPK
 echo "[13] assemble outer SPK"
 cd "$W/outer"
