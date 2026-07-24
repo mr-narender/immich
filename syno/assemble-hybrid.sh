@@ -84,6 +84,11 @@ printf '#!/bin/sh\nexit 0\n' > "$W/inj/scripts/preupgrade"
 printf '#!/bin/sh\nexit 0\n' > "$W/inj/scripts/postupgrade"
 chmod +x "$W/inj/scripts/preupgrade" "$W/inj/scripts/postupgrade"
 
+echo "[7c] inject conf/ (privilege, resource) from syno/src/conf"
+if [ -d "$REPO/syno/src/conf" ]; then
+  cp -r "$REPO/syno/src/conf" "$W/inj/conf"
+fi
+
 echo "[8] assemble outer spk"
 cd "$W/inj"
 EXTRA=""
