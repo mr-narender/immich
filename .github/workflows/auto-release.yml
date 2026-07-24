@@ -232,7 +232,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/pg-out
-          key: postgres-14-pgvector-0.8.0-v4-${{ matrix.arch }}
+          key: postgres-14-pgvector-0.8.0-v5-${{ matrix.arch }}
 
       - name: Build PostgreSQL 14 + pgvector (x86_64 / centos:7)
         if: steps.pg_cache.outputs.cache-hit != 'true' && matrix.arch == 'x86_64'
@@ -246,7 +246,7 @@ jobs:
               yum -y install \
                   https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm && \
               yum -y --disablerepo='*' --enablerepo='base,extras,updates,pgdg14,pgdg-common' \
-                  install postgresql14-server gcc make git yum-utils lz4 openssl-libs libicu && \
+                  install postgresql14-server postgresql14-contrib gcc make git yum-utils lz4 openssl-libs libicu && \
               mkdir -p /tmp/pgdevel && \
               yumdownloader --disablerepo='*' --enablerepo='pgdg14,pgdg-common' \
                   --destdir=/tmp/pgdevel postgresql14-devel && \
@@ -279,7 +279,7 @@ jobs:
           RUN dnf -y install \
                   https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-aarch64/pgdg-redhat-repo-latest.noarch.rpm && \
               dnf -y module disable postgresql && \
-              dnf -y install postgresql14-server gcc make git yum-utils redhat-rpm-config && \
+              dnf -y install postgresql14-server postgresql14-contrib gcc make git yum-utils redhat-rpm-config && \
               mkdir -p /tmp/pgdevel && \
               yumdownloader --disablerepo='*' --enablerepo='pgdg14,pgdg-common' \
                   --destdir=/tmp/pgdevel postgresql14-devel && \
