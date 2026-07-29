@@ -1,5 +1,5 @@
 package="immich"
-version=3.0.3-1
+version=3.1.0-1
 arch="x86_64"
 maintainer="SLR Software Inc."
 displayname="Immich"
@@ -9,5 +9,5 @@ startable="yes"
 adminprotocol="http"
 adminport="2284"
 adminurl="/"
-changelog="Immich v3.0.3"
+changelog="Immich v3.1.0"
 support_conf_folder="yes"
