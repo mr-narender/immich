@@ -323,6 +323,9 @@ jobs:
           echo "Geodata contents:"
           ls -lh /tmp/geodata-out/
 
+      - name: Patch syno/INFO version
+        run: sed -i "s/^version=.*/version=${SPK_VERSION}/" syno/INFO
+
       - name: Assemble SPK
         run: |
           REPO="$(pwd)" \
