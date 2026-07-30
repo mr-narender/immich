@@ -22,7 +22,9 @@
       "distributor_url": "https://github.com/mr-narender/immich",
       "changelog": "Immich v3.1.0",
       "arch": "x86_64 bromolow cedarview avoton grantley broadwell broadwellnk broadwellnkv2 broadwellds apollolake denverton purley coffeelake skylaked geminilake v1000 r1000 epyc7002",
-      "link": "https://github.com/mr-narender/immich/releases/download/v3.1.0/immich-x86_64-3.1.0-1.spk"
+      "link": "https://github.com/mr-narender/immich/releases/download/v3.1.0/immich-x86_64-3.1.0-1.spk",
+      "md5": "c1e9601913b2e329949cf7d19bc974dc",
+      "size": 253112320
     },
     {
       "id": "immich",
@@ -46,7 +48,9 @@
       "distributor_url": "https://github.com/mr-narender/immich",
       "changelog": "Immich v3.1.0",
       "arch": "rtd1296 rtd1619b armada37xx ac7613 ac7565",
-      "link": "https://github.com/mr-narender/immich/releases/download/v3.1.0/immich-arm64-3.1.0-1.spk"
+      "link": "https://github.com/mr-narender/immich/releases/download/v3.1.0/immich-arm64-3.1.0-1.spk",
+      "md5": "35d2d2763c0d273c618875374b066fe9",
+      "size": 240793600
     }
   ]
 }
