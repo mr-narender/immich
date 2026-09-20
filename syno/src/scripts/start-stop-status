@@ -50,7 +50,7 @@ _pick_port() {  # $1=scan-start  $2=previously-persisted (reuse if still free)
     _p="$1"; while ! _port_free "${_p}"; do _p=$((_p + 1)); done; echo "${_p}"
 }
 DB_PORT="${DB_PORT:-$(_pick_port 5432 "${DB_PORT_PERSISTED:-}")}"
-REDIS_PORT="${REDIS_PORT:-$(_pick_port 6379 "${REDIS_PORT_PERSISTED:-}")}"
+REDIS_PORT="${REDIS_PORT:-$(_pick_port 6381 "${REDIS_PORT_PERSISTED:-}")}"
 mkdir -p "${PKG_VAR}"
 printf 'DB_PORT_PERSISTED=%s\nREDIS_PORT_PERSISTED=%s\n' "${DB_PORT}" "${REDIS_PORT}" > "${PORTS_FILE}"
 export DB_PORT REDIS_PORT DB_USERNAME DB_PASSWORD DB_DATABASE_NAME
