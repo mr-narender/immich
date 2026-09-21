@@ -311,16 +311,42 @@ jobs:
           docker rm pg-ext-arm64
           echo "PG tarball: $(du -h /tmp/pg-out/postgres-arm64.tar.gz | cut -f1)"
 
-      - name: Download static ffmpeg (BtbN GPL n7.1)
+      - name: Download static ffmpeg (BtbN GPL latest)
         run: |
           mkdir -p /tmp/ffmpeg-out
-          FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz"
-          python3 -c "
-          import urllib.request
-          print('Downloading BtbN ffmpeg n7.1 GPL static (~112MB)...')
-          urllib.request.urlretrieve('${FFMPEG_URL}', '/tmp/ffmpeg-out/ffmpeg.tar.xz')
-          print('Done.')
-          "
+          python3 - << 'PYEOF'
+          import urllib.request, json, os, sys
+
+          arch = os.environ.get('ARCH', 'x86_64')
+          arch_suffix = 'linuxarm64' if arch == 'arm64' else 'linux64'
+
+          req = urllib.request.Request(
+              'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest',
+              headers={
+                  'Accept': 'application/vnd.github.v3+json',
+                  'User-Agent': 'github-actions-immich-spk',
+              },
+          )
+          with urllib.request.urlopen(req) as r:
+              data = json.loads(r.read())
+
+          asset = next(
+              (a for a in data['assets']
+               if arch_suffix in a['name']
+               and 'gpl' in a['name']
+               and 'lgpl' not in a['name']
+               and 'shared' not in a['name']
+               and a['name'].endswith('.tar.xz')),
+              None,
+          )
+          if not asset:
+              sys.exit(f"No GPL static ffmpeg found for arch_suffix={arch_suffix}")
+
+          url = asset['browser_download_url']
+          print(f"Downloading {asset['name']} ...")
+          urllib.request.urlretrieve(url, '/tmp/ffmpeg-out/ffmpeg.tar.xz')
+          print(f"Saved ({os.path.getsize('/tmp/ffmpeg-out/ffmpeg.tar.xz')} bytes)")
+          PYEOF
           echo "FFMPEG_TAR=/tmp/ffmpeg-out/ffmpeg.tar.xz" >> "$GITHUB_ENV"
 
       - name: Build libvips 8.18.3 + libheif 1.20.1 + libde265 1.0.15 (native)
