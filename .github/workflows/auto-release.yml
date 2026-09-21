@@ -379,14 +379,14 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-docs=OFF \
             -Dzstd=OFF -Dlzma=OFF -Dwebp=OFF -Djpeg12=OFF \
-            -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON \
-            -DCMAKE_INSTALL_CMAKEDIR=/tmp/tiff-cmake-discard
+            -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
           cmake --build tiff_build -j$(nproc)
           sudo cmake --install tiff_build
-          # Libtiff cmake config files go to /tmp (not $DEPS) so they are
-          # NOT found by find_package(TIFF). CMake falls back to its own
-          # FindTIFF module, which searches paths and finds our .a without
-          # the transitive-target export problem.
+          # Remove libtiff cmake config dir so find_package(TIFF) in libheif
+          # falls back to cmake's legacy FindTIFF module (path search) instead
+          # of TiffTargets.cmake which exports abstract targets that libheif's
+          # cmake context doesn't define (CMath::CMath, Deflate::Deflate, etc.)
+          sudo rm -rf "$DEPS/lib/cmake/tiff"
 
           git clone --depth 1 --branch v1.0.15 https://github.com/strukturag/libde265.git
           git clone --depth 1 --branch v1.20.1  https://github.com/strukturag/libheif.git
