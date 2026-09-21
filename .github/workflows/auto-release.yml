@@ -381,6 +381,14 @@ jobs:
             -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
           cmake --build tiff_build -j$(nproc)
           sudo cmake --install tiff_build
+          # TiffTargets.cmake exports abstract cmake targets (CMath::CMath,
+          # WebP::webp, etc.) that consumer builds (libheif) may not define.
+          # Replace them with concrete link flags so find_package(TIFF) works.
+          sudo sed -i \
+            -e 's/CMath::CMath/-lm/g' \
+            -e 's/WebP::webp/-lwebp/g' \
+            -e 's/WebP::webpmux/-lwebpmux/g' \
+            "$DEPS/lib/cmake/tiff/TiffTargets.cmake"
 
           git clone --depth 1 --branch v1.0.15 https://github.com/strukturag/libde265.git
           git clone --depth 1 --branch v1.20.1  https://github.com/strukturag/libheif.git
