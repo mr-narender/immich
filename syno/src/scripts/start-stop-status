@@ -140,7 +140,7 @@ _start_postgres() {
     # so a changed DB_PORT must win at runtime) — port/socket/listen are authoritative here.
     "${PG_BIN}/pg_ctl" -D "${PG_DATA}" -l "${LOG_DIR}/postgres.log" \
         -o "-p ${DB_PORT} -k ${RUN_DIR} -c listen_addresses=127.0.0.1" \
-        -w -t 60 start \
+        -w -t 300 start \
         >> "${LOG_DIR}/postgres.log" 2>&1 || { _log "pg_ctl start failed"; return 1; }
     _wait_pg || { _log "postgres not ready after 60s"; return 1; }
     _bootstrap_db || { _log "db bootstrap failed — not starting immich"; return 1; }
