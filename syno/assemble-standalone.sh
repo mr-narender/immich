@@ -90,6 +90,7 @@ if [ -n "$HEIF_DIR" ] && [ -d "$HEIF_DIR" ]; then
     mkdir -p lib/heif
     cp "$HEIF_DIR/libvips-cpp.so.8.18.3" lib/heif/
     cp "$HEIF_DIR/vips-heif.so"          lib/heif/
+    [ -f "$HEIF_DIR/libvips.so.42.20.3" ] && cp "$HEIF_DIR/libvips.so.42.20.3" lib/heif/
     echo "    libvips-cpp.so.8.18.3: $(file lib/heif/libvips-cpp.so.8.18.3 | grep -o 'ELF[^,]*')"
     echo "    vips-heif.so:          $(file lib/heif/vips-heif.so           | grep -o 'ELF[^,]*')"
 else

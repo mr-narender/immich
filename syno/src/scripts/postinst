@@ -40,6 +40,15 @@ if [ -f "${HEIF_LIBS}/libvips-cpp.so.8.18.3" ] && [ -d "${SHARP_LIBVIPS_DIR}" ];
     cp "${HEIF_LIBS}/libvips-cpp.so.8.18.3" "${SHARP_LIBVIPS_DIR}/libvips-cpp.so.8.18.3"
 fi
 
+# Deploy main libvips.so.42 so our libvips-cpp.so.8.18.3 and vips-heif.so can find it.
+# Our custom .so files have RPATH=/var/packages/immich/target/lib (compiled with that prefix).
+if [ -f "${HEIF_LIBS}/libvips.so.42.20.3" ]; then
+    mkdir -p "${INSTALL_ROOT}/lib"
+    cp "${HEIF_LIBS}/libvips.so.42.20.3" "${INSTALL_ROOT}/lib/libvips.so.42.20.3"
+    ln -sf libvips.so.42.20.3 "${INSTALL_ROOT}/lib/libvips.so.42"
+    ln -sf libvips.so.42      "${INSTALL_ROOT}/lib/libvips.so"
+fi
+
 if [ -f "${HEIF_LIBS}/vips-heif.so" ]; then
     mkdir -p "${VIPS_MODULE_DIR}"
     cp "${HEIF_LIBS}/vips-heif.so" "${VIPS_MODULE_DIR}/vips-heif.so"

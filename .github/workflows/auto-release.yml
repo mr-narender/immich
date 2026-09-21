@@ -411,9 +411,15 @@ jobs:
           [ -z "$LIBVIPS_CPP" ] && { echo "ERROR: libvips-cpp.so not found in install dir"; \
             ls "/tmp/vips_install${INSTALL_PREFIX}/lib/" | grep vips || true; exit 1; }
           cp "$LIBVIPS_CPP" "$OUT/libvips-cpp.so.8.18.3"
+          LIBVIPS_MAIN=$(find "/tmp/vips_install${INSTALL_PREFIX}/lib" -maxdepth 1 \
+            -name "libvips.so.*.*.*" -not -name "*cpp*" -type f | sort | tail -1)
+          [ -z "$LIBVIPS_MAIN" ] && { echo "ERROR: libvips.so not found"; \
+            ls "/tmp/vips_install${INSTALL_PREFIX}/lib/" | grep vips || true; exit 1; }
+          cp "$LIBVIPS_MAIN" "$OUT/libvips.so.42.20.3"
           cp "/tmp/vips_install${INSTALL_PREFIX}/lib/vips-modules-8.18/vips-heif.so" "$OUT/"
           echo "heif libs built (source: $LIBVIPS_CPP):"
           file "$OUT/libvips-cpp.so.8.18.3"
+          file "$OUT/libvips.so.42.20.3"
           file "$OUT/vips-heif.so"
           echo "HEIF_DIR=$OUT" >> "$GITHUB_ENV"
 
