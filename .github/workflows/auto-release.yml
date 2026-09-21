@@ -413,6 +413,15 @@ jobs:
           sudo cmake --install heif_build
           sudo sed -i 's|^Libs:.*|& -lde265|' "$DEPS/lib/pkgconfig/libheif.pc"
 
+          # Purge dev headers for features absent on DSM NAS, so libvips does
+          # not auto-detect and link against them. These packages may arrive as
+          # pre-installs on the ubuntu-22.04 runner image.
+          sudo apt-get remove -y \
+            libpangocairo-1.0-0 libpangocairo-1.0-dev \
+            libpango-1.0-0 libpango1.0-dev \
+            librsvg2-dev \
+            libopenexr-dev 2>/dev/null || true
+
           INSTALL_PREFIX="/var/packages/immich/target"
           PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
           meson setup vips_build libvips \
@@ -427,7 +436,6 @@ jobs:
             -Dfftw=disabled \
             -Dorc=disabled \
             -Drsvg=disabled \
-            -Dpango=disabled \
             -Dopenexr=disabled
           ninja -C vips_build -j$(nproc)
           DESTDIR=/tmp/vips_install ninja -C vips_build install
