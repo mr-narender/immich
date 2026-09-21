@@ -376,6 +376,7 @@ jobs:
           cmake -B tiff_build libtiff \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
             -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-docs=OFF \
             -Dzstd=OFF -Dlzma=OFF -Dwebp=OFF -Djpeg12=OFF \
             -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
