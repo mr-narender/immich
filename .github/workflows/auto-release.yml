@@ -420,7 +420,8 @@ jobs:
             libpangocairo-1.0-0 libpangocairo-1.0-dev \
             libpango-1.0-0 libpango1.0-dev \
             librsvg2-dev \
-            libopenexr-dev 2>/dev/null || true
+            libopenexr-dev \
+            libopenjp2-dev 2>/dev/null || true
 
           INSTALL_PREFIX="/var/packages/immich/target"
           PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
@@ -436,7 +437,8 @@ jobs:
             -Dfftw=disabled \
             -Dorc=disabled \
             -Drsvg=disabled \
-            -Dopenexr=disabled
+            -Dopenexr=disabled \
+            -Dopenjpeg=disabled
           ninja -C vips_build -j$(nproc)
           DESTDIR=/tmp/vips_install ninja -C vips_build install
 
