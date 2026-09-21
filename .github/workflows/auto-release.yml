@@ -379,7 +379,8 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-docs=OFF \
             -Dzstd=OFF -Dlzma=OFF -Dwebp=OFF -Djpeg12=OFF \
-            -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
+            -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON \
+            -DCMAKE_DISABLE_FIND_PACKAGE_Deflate=ON
           cmake --build tiff_build -j$(nproc)
           sudo cmake --install tiff_build
           # Remove libtiff cmake config dir so find_package(TIFF) in libheif
