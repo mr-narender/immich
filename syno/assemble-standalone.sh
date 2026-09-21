@@ -75,8 +75,8 @@ if [ -n "$FFMPEG_TAR" ] && [ -f "$FFMPEG_TAR" ]; then
     # BtbN tarball: ffmpeg-n7.1-*-linux64-gpl-7.1/bin/{ffmpeg,ffprobe}
     tar -xJf "$FFMPEG_TAR" -C /tmp --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' 2>/dev/null || \
         tar -xf "$FFMPEG_TAR" -C /tmp 2>/dev/null || true
-    find /tmp -maxdepth 4 -name "ffmpeg"  -type f | head -1 | xargs -I{} cp {} bin/ffmpeg
-    find /tmp -maxdepth 4 -name "ffprobe" -type f | head -1 | xargs -I{} cp {} bin/ffprobe
+    find /tmp -maxdepth 4 -name "ffmpeg"  -type f 2>/dev/null | head -1 | xargs -I{} cp {} bin/ffmpeg || true
+    find /tmp -maxdepth 4 -name "ffprobe" -type f 2>/dev/null | head -1 | xargs -I{} cp {} bin/ffprobe || true
     chmod +x bin/ffmpeg bin/ffprobe 2>/dev/null || true
     [ -f bin/ffmpeg ] && echo "    ffmpeg: $(file bin/ffmpeg | grep -o 'ELF.*statically\|ELF.*static-pie\|ELF[^,]*')" \
                       || echo "    WARNING: ffmpeg not found in tarball"
