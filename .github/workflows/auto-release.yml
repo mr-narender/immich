@@ -358,7 +358,7 @@ jobs:
           sudo apt-get install -y -qq \
             build-essential cmake pkg-config meson ninja-build \
             libglib2.0-dev libexpat1-dev liblcms2-dev \
-            libjpeg-dev libpng-dev libwebp-dev libtiff-dev \
+            libjpeg-dev libpng-dev libwebp-dev \
             libfftw3-dev liborc-0.4-dev libexif-dev \
             libgsf-1-dev zlib1g-dev libzstd-dev
           pip3 install -q meson --upgrade
@@ -368,6 +368,18 @@ jobs:
           OUT=/tmp/heif-out
           mkdir -p "$WORK" "$OUT"
           cd "$WORK"
+
+          # libtiff built from source as static so libvips embeds it.
+          # DSM ships libtiff.so.5; Ubuntu 24.04 CI has libtiff.so.6 — building
+          # static avoids the ABI version mismatch at runtime on the NAS.
+          git clone --depth 1 --branch v4.6.0 https://gitlab.com/libtiff/libtiff.git
+          cmake -B tiff_build libtiff \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-docs=OFF \
+            -Dzstd=OFF -Dlzma=OFF -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
+          cmake --build tiff_build -j$(nproc)
+          sudo cmake --install tiff_build
 
           git clone --depth 1 --branch v1.0.15 https://github.com/strukturag/libde265.git
           git clone --depth 1 --branch v1.20.1  https://github.com/strukturag/libheif.git
