@@ -425,7 +425,10 @@ jobs:
             -Dopenslide=disabled \
             -Dintrospection=disabled \
             -Dfftw=disabled \
-            -Dorc=disabled
+            -Dorc=disabled \
+            -Drsvg=disabled \
+            -Dpango=disabled \
+            -Dopenexr=disabled
           ninja -C vips_build -j$(nproc)
           DESTDIR=/tmp/vips_install ninja -C vips_build install
 
