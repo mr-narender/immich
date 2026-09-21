@@ -1,0 +1,78 @@
+name: Build heif libs (patch NAS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build libvips 8.18.3 + libheif 1.20.1 + libde265 1.0.15 (native x86_64)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential cmake pkg-config meson ninja-build \
+            libglib2.0-dev libexpat1-dev liblcms2-dev \
+            libjpeg-dev libpng-dev libwebp-dev libtiff-dev \
+            libfftw3-dev liborc-0.4-dev libexif-dev \
+            libgsf-1-dev zlib1g-dev libzstd-dev
+          pip3 install -q meson --upgrade
+
+          WORK=/tmp/vips-build
+          DEPS=/opt/heif-deps
+          OUT=/tmp/heif-out
+          mkdir -p "$WORK" "$OUT"
+          cd "$WORK"
+
+          git clone --depth 1 --branch v1.0.15 https://github.com/strukturag/libde265.git
+          git clone --depth 1 --branch v1.20.1  https://github.com/strukturag/libheif.git
+          git clone --depth 1 --branch v8.18.3  https://github.com/libvips/libvips.git
+
+          cmake -B de265_build libde265 \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
+            -DBUILD_SHARED_LIBS=OFF -DENABLE_SDL=OFF -DENABLE_ENCODER=OFF
+          cmake --build de265_build -j$(nproc)
+          sudo cmake --install de265_build
+
+          PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
+          cmake -B heif_build libheif \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
+            -DCMAKE_PREFIX_PATH="$DEPS" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DWITH_LIBDE265=ON -DWITH_LIBDE265_PLUGIN=OFF \
+            -DWITH_X265=OFF -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF \
+            -DENABLE_PLUGIN_LOADING=OFF \
+            -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build heif_build -j$(nproc)
+          sudo cmake --install heif_build
+          sudo sed -i 's|^Libs:.*|& -lde265|' "$DEPS/lib/pkgconfig/libheif.pc"
+
+          INSTALL_PREFIX="/var/packages/immich/target"
+          PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
+          meson setup vips_build libvips \
+            --prefix="$INSTALL_PREFIX" \
+            --libdir=lib \
+            --buildtype=release \
+            --default-library=shared \
+            -Dheif=enabled \
+            -Dmagick=disabled \
+            -Dopenslide=disabled \
+            -Dintrospection=disabled
+          ninja -C vips_build -j$(nproc)
+          DESTDIR=/tmp/vips_install ninja -C vips_build install
+
+          cp "/tmp/vips_install${INSTALL_PREFIX}/lib/libvips-cpp.so.8.18.3" "$OUT/"
+          cp "/tmp/vips_install${INSTALL_PREFIX}/lib/vips-modules-8.18/vips-heif.so" "$OUT/"
+          echo "=== Built libs ==="
+          file "$OUT/libvips-cpp.so.8.18.3"
+          file "$OUT/vips-heif.so"
+
+      - name: Upload heif libs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: heif-libs-x86_64
+          path: /tmp/heif-out/
+          retention-days: 7
