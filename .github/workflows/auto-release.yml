@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 */6 * * *'
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Rebuild and re-release even if this version already exists"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,11 +49,16 @@ jobs:
               'https://api.github.com/repos/mr-narender/immich/releases/tags/v' + version,
               headers=headers,
           )
+          force = os.environ.get('FORCE_REBUILD', '').lower() in ('true', '1', 'yes')
           try:
               with urllib.request.urlopen(exist_req) as r:
                   r.read()
-              should_release = 'false'
-              print('Release v' + version + ' already published — skipping')
+              if force:
+                  should_release = 'true'
+                  print('Force-rebuild: v' + version + ' already published — rebuilding anyway')
+              else:
+                  should_release = 'false'
+                  print('Release v' + version + ' already published — skipping')
           except urllib.error.HTTPError as e:
               if e.code == 404:
                   should_release = 'true'
@@ -64,6 +74,7 @@ jobs:
           PYEOF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
 
   build:
     needs: detect
