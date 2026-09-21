@@ -42,6 +42,31 @@
     ]
   },
   {
+    "step_title": "Automatic Updates",
+    "items": [
+      {
+        "type": "singleselect",
+        "desc": "To receive update notifications when a new Immich version is released, add this package feed to DSM Package Center:\n\nPackage Center → Settings → Package Sources → Add:\nhttps://raw.githubusercontent.com/mr-narender/immich/main/packages.json\n\nDSM will check the feed regularly and notify you when a newer SPK is available.",
+        "subitems": [
+          {
+            "key": "WIZARD_ADD_FEED",
+            "defaultValue": "yes",
+            "values": [
+              {
+                "value": "yes",
+                "label": "Yes — add the update feed automatically"
+              },
+              {
+                "value": "no",
+                "label": "No — I will add it manually later"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
     "step_title": "Machine Learning",
     "items": [
       {

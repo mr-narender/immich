@@ -17,6 +17,19 @@ if [ ! -f "${CONF_FILE}" ]; then
         sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${WIZARD_DB_PASSWORD}|" "${CONF_FILE}"
 fi
 
+# Register package feed so DSM notifies on new Immich releases.
+# User opted in via wizard (WIZARD_ADD_FEED=yes) or this is a silent upgrade.
+FEED_URL="https://raw.githubusercontent.com/mr-narender/immich/main/packages.json"
+FEED_NAME="Immich (mr-narender)"
+FEED_CFG="/usr/syno/etc/packages/feeds.conf"
+if [ "${WIZARD_ADD_FEED:-yes}" != "no" ]; then
+    if [ -f "${FEED_CFG}" ]; then
+        if ! grep -qF "${FEED_URL}" "${FEED_CFG}" 2>/dev/null; then
+            echo "${FEED_NAME}|${FEED_URL}" >> "${FEED_CFG}"
+        fi
+    fi
+fi
+
 # Deploy custom libvips (libheif 1.20.1 + libde265) to replace the bundled
 # @img/sharp-libvips-linux-x64 copy, which lacks HEVC/HEIC decoder support.
 HEIF_LIBS="${INSTALL_ROOT}/lib/heif"
