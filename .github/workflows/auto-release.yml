@@ -377,7 +377,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
             -DBUILD_SHARED_LIBS=OFF \
             -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-docs=OFF \
-            -Dzstd=OFF -Dlzma=OFF -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
+            -Dzstd=OFF -Dlzma=OFF -Dwebp=OFF -Djpeg12=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_JBIG=ON
           cmake --build tiff_build -j$(nproc)
           sudo cmake --install tiff_build
 
