@@ -13,6 +13,8 @@ REDIS_TAR="${REDIS_TAR:?REDIS_TAR required}"
 NODE_TAR="${NODE_TAR:?NODE_TAR required}"
 GEODATA_DIR="${GEODATA_DIR:?GEODATA_DIR required}"
 SCRIPTS_SRC="$REPO/syno/src/scripts"
+FFMPEG_TAR="${FFMPEG_TAR:-}"      # optional: path to static ffmpeg tarball
+HEIF_DIR="${HEIF_DIR:-}"          # optional: dir containing libvips-cpp.so.8.18.3 + vips-heif.so
 W="/tmp/immich-spk-standalone"
 
 # pre-flight
@@ -66,6 +68,34 @@ mkdir -p conf
 [ -d "$REPO/syno/src/conf" ] && cp -r "$REPO/syno/src/conf/." ./conf/
 [ -f "$REPO/syno/src/immich.env.default" ] && cp "$REPO/syno/src/immich.env.default" ./env.default
 
+# [8b] static ffmpeg + ffprobe
+if [ -n "$FFMPEG_TAR" ] && [ -f "$FFMPEG_TAR" ]; then
+    echo "[8b] inject ffmpeg"
+    mkdir -p bin
+    # BtbN tarball: ffmpeg-n7.1-*-linux64-gpl-7.1/bin/{ffmpeg,ffprobe}
+    tar -xJf "$FFMPEG_TAR" -C /tmp --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' 2>/dev/null || \
+        tar -xf "$FFMPEG_TAR" -C /tmp 2>/dev/null || true
+    find /tmp -maxdepth 4 -name "ffmpeg"  -type f | head -1 | xargs -I{} cp {} bin/ffmpeg
+    find /tmp -maxdepth 4 -name "ffprobe" -type f | head -1 | xargs -I{} cp {} bin/ffprobe
+    chmod +x bin/ffmpeg bin/ffprobe 2>/dev/null || true
+    [ -f bin/ffmpeg ] && echo "    ffmpeg: $(file bin/ffmpeg | grep -o 'ELF.*statically\|ELF.*static-pie\|ELF[^,]*')" \
+                      || echo "    WARNING: ffmpeg not found in tarball"
+else
+    echo "[8b] ffmpeg: FFMPEG_TAR not set — skipping (system ffmpeg will be used)"
+fi
+
+# [8c] libvips-cpp.so.8.18.3 + vips-heif.so (HEIC thumbnail support)
+if [ -n "$HEIF_DIR" ] && [ -d "$HEIF_DIR" ]; then
+    echo "[8c] inject heif libs"
+    mkdir -p lib/heif
+    cp "$HEIF_DIR/libvips-cpp.so.8.18.3" lib/heif/
+    cp "$HEIF_DIR/vips-heif.so"          lib/heif/
+    echo "    libvips-cpp.so.8.18.3: $(file lib/heif/libvips-cpp.so.8.18.3 | grep -o 'ELF[^,]*')"
+    echo "    vips-heif.so:          $(file lib/heif/vips-heif.so           | grep -o 'ELF[^,]*')"
+else
+    echo "[8c] heif libs: HEIF_DIR not set — HEIC thumbnails will not work"
+fi
+
 # [9] bin/ wrappers (exact content — do not edit)
 echo "[9] bin wrappers"
 mkdir -p bin
@@ -88,7 +118,7 @@ export DB_DATABASE_NAME="${DB_DATABASE_NAME:-immich}"
 export REDIS_HOSTNAME="${REDIS_HOSTNAME:-127.0.0.1}"
 export REDIS_PORT="${REDIS_PORT:-6379}"
 export LOG_LEVEL="${LOG_LEVEL:-log}"
-export PATH="${INSTALL_ROOT}/node/bin:${PATH}"
+export PATH="${INSTALL_ROOT}/bin:${INSTALL_ROOT}/node/bin:${PATH}"
 export NODE_MODULES="${INSTALL_ROOT}/server/node_modules"
 export DB_VECTOR_EXTENSION="${DB_VECTOR_EXTENSION:-pgvector}"
 export IMMICH_BUILD_DATA="${IMMICH_BUILD_DATA:-/var/packages/immich/target}"
@@ -112,7 +142,7 @@ export DB_DATABASE_NAME="${DB_DATABASE_NAME:-immich}"
 export REDIS_HOSTNAME="${REDIS_HOSTNAME:-127.0.0.1}"
 export REDIS_PORT="${REDIS_PORT:-6379}"
 export IMMICH_WORKERS="microservices"
-export PATH="${INSTALL_ROOT}/node/bin:${PATH}"
+export PATH="${INSTALL_ROOT}/bin:${INSTALL_ROOT}/node/bin:${PATH}"
 export DB_VECTOR_EXTENSION="${DB_VECTOR_EXTENSION:-pgvector}"
 export IMMICH_BUILD_DATA="${IMMICH_BUILD_DATA:-/var/packages/immich/target}"
 exec "${NODE}" "${SERVER_DIST}/main" "$@"
@@ -134,6 +164,7 @@ echo "[12] metadata"
 cp "$REPO/syno/INFO" "$W/outer/INFO"
 cp "$SCRIPTS_SRC/start-stop-status" "$W/outer/scripts/start-stop-status"
 cp "$SCRIPTS_SRC/preinst"           "$W/outer/scripts/preinst"
+[ -f "$SCRIPTS_SRC/postinst" ] && cp "$SCRIPTS_SRC/postinst" "$W/outer/scripts/postinst"
 chmod +x "$W/outer/scripts/"*
 printf '#!/bin/sh\nexit 0\n' > "$W/outer/scripts/preupgrade"
 printf '#!/bin/sh\nexit 0\n' > "$W/outer/scripts/postupgrade"

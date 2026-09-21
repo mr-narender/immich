@@ -403,6 +403,61 @@ print('  Done.')
     log_ok "  $(file "${STAGE_DIR}/perl/bin/perl" | cut -d: -f2- | xargs)"
 }
 
+# ── Step 4e: Build libvips + libheif + libde265 via Docker (linux/amd64) ─────
+# Uses Docker --platform linux/amd64 on the build Mac (arm64). Unlike postgres,
+# libvips uses cmake+meson+ninja which runs correctly under QEMU emulation.
+# Produces two files placed into STAGE_DIR/lib/heif/:
+#   libvips-cpp.so.8.18.3   — replaces the bundled sharp copy at postinst time
+#   vips-heif.so            — HEIC/HEIF decoder plugin auto-loaded by vips_init()
+# Prefix = /var/packages/immich/target so vips-heif.so is found in the compiled-in
+# module path (vips-modules-8.18/) without needing VIPS_MODULE_DIR.
+build_vips_heif() {
+    log_section "Step 4e: Building libvips 8.18.3 + libheif 1.20.1 + libde265 (Docker linux/amd64)"
+
+    local docker_dir="${SYNO_DIR}/docker/vips-heif-de265"
+    local out_dir="${STAGE_DIR}/lib/heif"
+
+    mkdir -p "${out_dir}"
+
+    # Clone source repos into Docker context if not already present
+    for repo_spec in \
+        "libde265|https://github.com/strukturag/libde265.git|v1.0.15" \
+        "libheif|https://github.com/strukturag/libheif.git|v1.20.1" \
+        "libvips|https://github.com/libvips/libvips.git|v8.18.3"; do
+        local name="${repo_spec%%|*}"; local rest="${repo_spec#*|}"; local url="${rest%%|*}"; local tag="${rest##*|}"
+        if [ ! -d "${docker_dir}/${name}" ]; then
+            echo "  → Cloning ${name} ${tag}..."
+            git clone --depth 1 --branch "${tag}" "${url}" "${docker_dir}/${name}"
+        else
+            log_warn "${name} already present in docker context, skipping clone"
+        fi
+    done
+
+    log_ok "Building Docker image immich-vips-heif (linux/amd64)..."
+    docker build \
+        --platform linux/amd64 \
+        --tag immich-vips-heif:build \
+        "${docker_dir}"
+
+    log_ok "Extracting libvips-cpp.so.8.18.3 and vips-heif.so..."
+    local install_prefix="/var/packages/immich/target"
+    local cid
+    cid="$(docker create immich-vips-heif:build)"
+    docker cp "${cid}:/output${install_prefix}/lib/libvips-cpp.so.8.18.3" "${out_dir}/libvips-cpp.so.8.18.3"
+    docker cp "${cid}:/output${install_prefix}/lib/vips-modules-8.18/vips-heif.so" "${out_dir}/vips-heif.so"
+    docker rm "${cid}" > /dev/null
+
+    if [ ! -f "${out_dir}/libvips-cpp.so.8.18.3" ]; then
+        die "libvips-cpp.so.8.18.3 not found after Docker build"
+    fi
+    if [ ! -f "${out_dir}/vips-heif.so" ]; then
+        die "vips-heif.so not found after Docker build"
+    fi
+
+    log_ok "libvips-cpp.so.8.18.3 → stage/lib/heif/"
+    log_ok "vips-heif.so          → stage/lib/heif/"
+}
+
 # ── Step 5: Build Python ML environment via Docker ───────────────────────────
 build_ml_python() {
     if [ "${INCLUDE_ML}" != "1" ]; then
@@ -582,6 +637,13 @@ assemble_stage() {
             log_warn "Geodata not found — will be downloaded on first run"
         fi
     fi
+
+    # ── libvips + vips-heif ──────────────────────────────────────────────────
+    if [ ! -f "${STAGE_DIR}/lib/heif/libvips-cpp.so.8.18.3" ] || \
+       [ ! -f "${STAGE_DIR}/lib/heif/vips-heif.so" ]; then
+        die "heif libs missing from stage — Step 4e (build_vips_heif) must have failed"
+    fi
+    log_ok "libvips + vips-heif libs present in stage/lib/heif/ (from Step 4e)"
 
     # ── Scripts ──────────────────────────────────────────────────────────────
     echo "  → Copying scripts to stage/scripts/"
@@ -970,6 +1032,26 @@ if [ ! -f "${CONF_FILE}" ]; then
     fi
 fi
 
+# Deploy custom libvips (libheif 1.20.1 + libde265 1.0.15) to replace the
+# bundled @img/sharp-libvips-linux-x64@1.3.2 copy. The bundled libvips-cpp
+# lacks HEVC support; our build adds it so HEIC thumbnails generate correctly.
+HEIF_LIBS="${INSTALL_ROOT}/lib/heif"
+SHARP_LIBVIPS_DIR="${INSTALL_ROOT}/server/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.2/node_modules/@img/sharp-libvips-linux-x64/lib"
+VIPS_MODULE_DIR="${INSTALL_ROOT}/lib/vips-modules-8.18"
+
+if [ -f "${HEIF_LIBS}/libvips-cpp.so.8.18.3" ] && [ -d "${SHARP_LIBVIPS_DIR}" ]; then
+    cp "${HEIF_LIBS}/libvips-cpp.so.8.18.3" "${SHARP_LIBVIPS_DIR}/libvips-cpp.so.8.18.3"
+    echo "postinst: deployed libvips-cpp.so.8.18.3 to sharp libvips dir"
+else
+    echo "postinst: WARNING — heif libs or sharp libvips dir missing, HEIC thumbnails may fail"
+fi
+
+if [ -f "${HEIF_LIBS}/vips-heif.so" ]; then
+    mkdir -p "${VIPS_MODULE_DIR}"
+    cp "${HEIF_LIBS}/vips-heif.so" "${VIPS_MODULE_DIR}/vips-heif.so"
+    echo "postinst: deployed vips-heif.so to ${VIPS_MODULE_DIR}"
+fi
+
 # The package runs as the immich user — it MUST be able to READ its config and
 # WRITE its data dirs. Resolve the (possibly wizard-overridden) data paths.
 . "${CONF_FILE}" 2>/dev/null
@@ -1008,6 +1090,7 @@ main() {
     download_nodejs
     download_ffmpeg
     download_perl
+    build_vips_heif
     build_postgres
     build_ml_python
     assemble_stage

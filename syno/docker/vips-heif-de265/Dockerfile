@@ -1,6 +1,10 @@
 FROM --platform=linux/amd64 ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
+# TARGET = where immich-spk installs on the NAS; libvips compiles this path in
+# so vips-heif.so is found at vips_init() without any env override.
+ENV INSTALL_PREFIX=/var/packages/immich/target
+
 RUN apt-get update && apt-get install -y \
     build-essential cmake pkg-config meson ninja-build python3-pip patchelf \
     libglib2.0-dev libexpat1-dev liblcms2-dev \
@@ -12,12 +16,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
+# libde265 v1.0.15 — HEVC software decoder (static, embedded in libheif)
 COPY libde265 libde265
 RUN cmake -B de265/build libde265 \
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt \
       -DBUILD_SHARED_LIBS=OFF -DENABLE_SDL=OFF -DENABLE_ENCODER=OFF && \
     cmake --build de265/build -j$(nproc) && cmake --install de265/build
 
+# libheif v1.20.1 — security limit raised to 1024 references (vs 16 in 1.12.0)
 ENV PKG_CONFIG_PATH=/opt/lib/pkgconfig
 COPY libheif libheif
 RUN cmake -B heif/build libheif \
@@ -34,9 +40,11 @@ RUN cmake -B heif/build libheif \
 RUN sed -i 's|^Libs:.*|& -lde265|' /opt/lib/pkgconfig/libheif.pc && \
     grep 'Libs:' /opt/lib/pkgconfig/libheif.pc
 
+# libvips v8.18.3 — must match @img/sharp-libvips-linux-x64@1.3.2 (libvips-cpp.so.8.18.3)
+# prefix = NAS install root so vips-modules-8.18/ is found at runtime without VIPS_MODULE_DIR
 COPY libvips libvips
 RUN meson setup vips_build libvips \
-      --prefix=/opt \
+      --prefix="${INSTALL_PREFIX}" \
       --libdir=lib \
       --buildtype=release \
       --default-library=shared \
@@ -45,6 +53,8 @@ RUN meson setup vips_build libvips \
       -Dopenslide=disabled \
       -Dintrospection=disabled && \
     ninja -C vips_build -j$(nproc) && \
-    ninja -C vips_build install
+    DESTDIR=/output ninja -C vips_build install
 
-RUN ls -la /opt/lib/libvips* /opt/lib/vips-modules-8.17/
+# Verify outputs
+RUN ls -la /output${INSTALL_PREFIX}/lib/libvips* \
+           /output${INSTALL_PREFIX}/lib/vips-modules-8.18/

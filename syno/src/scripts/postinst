@@ -1,0 +1,46 @@
+#!/bin/sh
+# postinst — runs as root after package files are extracted.
+INSTALL_ROOT="/var/packages/immich/target"
+CONF_DIR="${INSTALL_ROOT}/conf"
+CONF_FILE="${CONF_DIR}/immich.conf"
+PKG_USER="immich"
+PKG_VAR="/var/packages/immich/var"
+
+mkdir -p "${CONF_DIR}" "${PKG_VAR}"
+
+# First-install: write conf from env.default, applying wizard choices.
+if [ ! -f "${CONF_FILE}" ]; then
+    cp "${INSTALL_ROOT}/env.default" "${CONF_FILE}"
+    [ -n "${WIZARD_UPLOAD_LOCATION:-}" ] && \
+        sed -i "s|^UPLOAD_LOCATION=.*|UPLOAD_LOCATION=${WIZARD_UPLOAD_LOCATION}|" "${CONF_FILE}"
+    [ -n "${WIZARD_DB_PASSWORD:-}" ] && \
+        sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${WIZARD_DB_PASSWORD}|" "${CONF_FILE}"
+fi
+
+# Deploy custom libvips (libheif 1.20.1 + libde265) to replace the bundled
+# @img/sharp-libvips-linux-x64 copy, which lacks HEVC/HEIC decoder support.
+HEIF_LIBS="${INSTALL_ROOT}/lib/heif"
+SHARP_LIBVIPS_DIR="${INSTALL_ROOT}/server/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.2/node_modules/@img/sharp-libvips-linux-x64/lib"
+VIPS_MODULE_DIR="${INSTALL_ROOT}/lib/vips-modules-8.18"
+
+if [ -f "${HEIF_LIBS}/libvips-cpp.so.8.18.3" ] && [ -d "${SHARP_LIBVIPS_DIR}" ]; then
+    cp "${HEIF_LIBS}/libvips-cpp.so.8.18.3" "${SHARP_LIBVIPS_DIR}/libvips-cpp.so.8.18.3"
+fi
+
+if [ -f "${HEIF_LIBS}/vips-heif.so" ]; then
+    mkdir -p "${VIPS_MODULE_DIR}"
+    cp "${HEIF_LIBS}/vips-heif.so" "${VIPS_MODULE_DIR}/vips-heif.so"
+fi
+
+# Ownership + permissions
+. "${CONF_FILE}" 2>/dev/null || true
+mkdir -p \
+    "${UPLOAD_LOCATION:-/var/packages/immich/var/upload}" \
+    "${INSTALL_ROOT}/log" "${INSTALL_ROOT}/run"
+chown -R "${PKG_USER}:${PKG_USER}" \
+    "${CONF_DIR}" "${PKG_VAR}" \
+    "${INSTALL_ROOT}/log" "${INSTALL_ROOT}/run" 2>/dev/null || true
+chmod 750 "${CONF_DIR}"
+chmod 640 "${CONF_FILE}" 2>/dev/null || true
+
+exit 0

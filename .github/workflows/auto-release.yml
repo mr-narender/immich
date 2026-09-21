@@ -300,6 +300,82 @@ jobs:
           docker rm pg-ext-arm64
           echo "PG tarball: $(du -h /tmp/pg-out/postgres-arm64.tar.gz | cut -f1)"
 
+      - name: Download static ffmpeg (BtbN GPL n7.1)
+        run: |
+          mkdir -p /tmp/ffmpeg-out
+          FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz"
+          python3 -c "
+          import urllib.request
+          print('Downloading BtbN ffmpeg n7.1 GPL static (~112MB)...')
+          urllib.request.urlretrieve('${FFMPEG_URL}', '/tmp/ffmpeg-out/ffmpeg.tar.xz')
+          print('Done.')
+          "
+          echo "FFMPEG_TAR=/tmp/ffmpeg-out/ffmpeg.tar.xz" >> "$GITHUB_ENV"
+
+      - name: Build libvips 8.18.3 + libheif 1.20.1 + libde265 1.0.15 (native)
+        run: |
+          # Native build on ubuntu-latest (x86_64 Linux) — no QEMU, no Docker.
+          # Produces libvips-cpp.so.8.18.3 (replaces bundled sharp copy) and
+          # vips-heif.so (HEIC decoder plugin), fixing iPhone thumbnail generation.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential cmake pkg-config meson ninja-build \
+            libglib2.0-dev libexpat1-dev liblcms2-dev \
+            libjpeg-dev libpng-dev libwebp-dev libtiff-dev \
+            libfftw3-dev liborc-0.4-dev libexif-dev \
+            libgsf-1-dev zlib1g-dev libzstd-dev
+          pip3 install -q meson --upgrade
+
+          WORK=/tmp/vips-build
+          DEPS=/opt/heif-deps
+          OUT=/tmp/heif-out
+          mkdir -p "$WORK" "$OUT"
+          cd "$WORK"
+
+          git clone --depth 1 --branch v1.0.15 https://github.com/strukturag/libde265.git
+          git clone --depth 1 --branch v1.20.1  https://github.com/strukturag/libheif.git
+          git clone --depth 1 --branch v8.18.3  https://github.com/libvips/libvips.git
+
+          cmake -B de265_build libde265 \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
+            -DBUILD_SHARED_LIBS=OFF -DENABLE_SDL=OFF -DENABLE_ENCODER=OFF
+          cmake --build de265_build -j$(nproc)
+          sudo cmake --install de265_build
+
+          PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
+          cmake -B heif_build libheif \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
+            -DCMAKE_PREFIX_PATH="$DEPS" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DWITH_LIBDE265=ON -DWITH_LIBDE265_PLUGIN=OFF \
+            -DWITH_X265=OFF -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF \
+            -DENABLE_PLUGIN_LOADING=OFF \
+            -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build heif_build -j$(nproc)
+          sudo cmake --install heif_build
+          sudo sed -i 's|^Libs:.*|& -lde265|' "$DEPS/lib/pkgconfig/libheif.pc"
+
+          INSTALL_PREFIX="/var/packages/immich/target"
+          PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
+          meson setup vips_build libvips \
+            --prefix="$INSTALL_PREFIX" \
+            --libdir=lib \
+            --buildtype=release \
+            --default-library=shared \
+            -Dheif=enabled \
+            -Dmagick=disabled \
+            -Dopenslide=disabled \
+            -Dintrospection=disabled
+          ninja -C vips_build -j$(nproc)
+          DESTDIR=/tmp/vips_install ninja -C vips_build install
+
+          cp "/tmp/vips_install${INSTALL_PREFIX}/lib/libvips-cpp.so.8.18.3" "$OUT/"
+          cp "/tmp/vips_install${INSTALL_PREFIX}/lib/vips-modules-8.18/vips-heif.so" "$OUT/"
+          echo "heif libs built:"
+          file "$OUT/libvips-cpp.so.8.18.3"
+          file "$OUT/vips-heif.so"
+          echo "HEIF_DIR=$OUT" >> "$GITHUB_ENV"
+
       - name: Download geodata
         run: |
           mkdir -p /tmp/geodata-out
@@ -337,6 +413,8 @@ jobs:
           GEODATA_DIR="/tmp/geodata-out" \
           SERVER_TAR="/tmp/build-out/server-linux-${ARCH}.tar.gz" \
           WEB_TAR="/tmp/build-out/web-build.tar.gz" \
+          FFMPEG_TAR="${FFMPEG_TAR:-}" \
+          HEIF_DIR="${HEIF_DIR:-}" \
           OUT_SPK="$(pwd)/immich-${ARCH}-${SPK_VERSION}.spk" \
           bash syno/assemble-standalone.sh
 
@@ -479,6 +557,8 @@ jobs:
             - Node.js v24 (latest patch)
             - PostgreSQL 14 + pgvector 0.8.0
             - Redis 7.2.7 (static musl binary)
+            - ffmpeg 7.1 GPL static (full filter support incl. HDR tone mapping)
+            - libvips 8.18.3 + libheif 1.20.1 + libde265 (HEIC/iPhone photo thumbnails)
 
             ### Downloads
 
