@@ -406,9 +406,13 @@ jobs:
           ninja -C vips_build -j$(nproc)
           DESTDIR=/tmp/vips_install ninja -C vips_build install
 
-          cp "/tmp/vips_install${INSTALL_PREFIX}/lib/libvips-cpp.so.8.18.3" "$OUT/"
+          LIBVIPS_CPP=$(find "/tmp/vips_install${INSTALL_PREFIX}/lib" -maxdepth 1 \
+            -name "libvips-cpp.so.*.*.*" -type f | sort | tail -1)
+          [ -z "$LIBVIPS_CPP" ] && { echo "ERROR: libvips-cpp.so not found in install dir"; \
+            ls "/tmp/vips_install${INSTALL_PREFIX}/lib/" | grep vips || true; exit 1; }
+          cp "$LIBVIPS_CPP" "$OUT/libvips-cpp.so.8.18.3"
           cp "/tmp/vips_install${INSTALL_PREFIX}/lib/vips-modules-8.18/vips-heif.so" "$OUT/"
-          echo "heif libs built:"
+          echo "heif libs built (source: $LIBVIPS_CPP):"
           file "$OUT/libvips-cpp.so.8.18.3"
           file "$OUT/vips-heif.so"
           echo "HEIF_DIR=$OUT" >> "$GITHUB_ENV"
