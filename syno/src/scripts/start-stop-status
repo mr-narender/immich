@@ -61,8 +61,8 @@ UV_BIN="${INSTALL_ROOT}/toolchain/uv"
 ML_DIR="${INSTALL_ROOT}/machine-learning"
 ML_VENV="${PKG_VAR}/ml-venv"
 
-# psql/pg_isready link libpq.so.5 (in $PG_LIB); the server binary is glibc-only
-export LD_LIBRARY_PATH="${PG_LIB}:${LD_LIBRARY_PATH:-}"
+# libvips.so.42 (custom build) and libpq.so.5 (postgres) both live under target
+export LD_LIBRARY_PATH="${INSTALL_ROOT}/lib:${PG_LIB}:${LD_LIBRARY_PATH:-}"
 
 _log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${LOG_DIR}/start-stop-status.log"; }
 

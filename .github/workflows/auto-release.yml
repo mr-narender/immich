@@ -387,6 +387,7 @@ jobs:
             -DWITH_LIBDE265=ON -DWITH_LIBDE265_PLUGIN=OFF \
             -DWITH_X265=OFF -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF \
             -DENABLE_PLUGIN_LOADING=OFF \
+            -DWITH_ZSTD=OFF \
             -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF
           cmake --build heif_build -j$(nproc)
           sudo cmake --install heif_build
@@ -402,7 +403,9 @@ jobs:
             -Dheif=enabled \
             -Dmagick=disabled \
             -Dopenslide=disabled \
-            -Dintrospection=disabled
+            -Dintrospection=disabled \
+            -Dfftw=disabled \
+            -Dorc=disabled
           ninja -C vips_build -j$(nproc)
           DESTDIR=/tmp/vips_install ninja -C vips_build install
 
