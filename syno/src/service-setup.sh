@@ -316,12 +316,18 @@ EOF
     mkdir -p "${IMMICH_BACKUP}"
     chown -R immich:immich "${IMMICH_BACKUP}" || true
 
-    # --- 8. pg_dump compatibility symlink --------------------------------
+    # --- 8. pg_dump compatibility symlinks --------------------------------
     # Immich's DatabaseBackup job hardcodes /usr/lib/postgresql/14/bin/pg_dump
     # (Debian convention). On Synology the binary lives under ${PG_BIN}.
     mkdir -p /usr/lib/postgresql/14/bin
     ln -sf "${PG_BIN}/pg_dump" /usr/lib/postgresql/14/bin/pg_dump
     _log "service_postinst: pg_dump symlink → /usr/lib/postgresql/14/bin/pg_dump"
+    # pg_dump was compiled against OpenSSL 1.0 (libcrypto.so.10 / libssl.so.10).
+    # DSM ships only 1.1 and 3. The bundled postgres/lib has the exact .so.10 files;
+    # symlink them into /usr/lib/ so the dynamic linker finds them without LD_LIBRARY_PATH.
+    ln -sf "${PG_DIR}/lib/libcrypto.so.10" /usr/lib/libcrypto.so.10 || true
+    ln -sf "${PG_DIR}/lib/libssl.so.10"    /usr/lib/libssl.so.10    || true
+    _log "service_postinst: libcrypto/libssl .so.10 symlinks → /usr/lib/"
 
     # --- 9. Deploy config UI to persistent location ----------------------
     # PKG_VAR survives reboots; INSTALL_ROOT/config-ui is bundled in the SPK.
