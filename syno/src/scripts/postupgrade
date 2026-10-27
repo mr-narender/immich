@@ -1,0 +1,4 @@
+#!/bin/sh
+# postinst must already have restored config before defaults or service startup.
+[ ! -e /var/packages/immich/target/.update-required ] || exit 1
+exit 0

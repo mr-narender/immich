@@ -2,7 +2,7 @@
 
 Automated Synology Package Center SPK for [Immich](https://github.com/immich-app/immich) — high-performance self-hosted photo and video management.
 
-Builds are triggered automatically every 6 hours. New upstream Immich releases produce a new SPK release within 6 hours.
+GitHub checks upstream releases every 6 hours and builds new SPKs when needed; completion depends on CI succeeding. This is a **build schedule**, not a NAS installation schedule. No unattended NAS updater is provided.
 
 ---
 
@@ -35,7 +35,7 @@ This package takes a different approach:
 | ML inference | Offloaded to external Docker host (GPU-capable) | Runs on the NAS itself (NAS CPU only) |
 | NAS RAM impact | Zero ML load — NAS stays fast | ML inference competes with Immich for NAS RAM |
 | PostgreSQL | Bundled PG14 + pgvector, version-pinned | Depends on SynoCommunity's postgres (version drift risk) |
-| Auto-updates | Within 6 hours of each Immich release | Manual — maintainer driven |
+| Release tracking | GitHub checks/builds every 6 hours; NAS installation is separate | Manual — maintainer driven |
 
 **Choose this package if:** you want a zero-dependency drop-in, don't want ML burning NAS resources, or want faster release tracking.
 
@@ -43,16 +43,19 @@ This package takes a different approach:
 
 ---
 
-## Install via Package Center (recommended)
+## Native Package Center updates (source only)
 
-1. DSM → Package Center → Settings → Package Sources → Add:
-   ```
-   https://raw.githubusercontent.com/mr-narender/immich/main/packages.json
-   ```
-2. Search for **Immich** in Package Center → Install.
-3. Follow the install wizard (sets data folder, optional ML URL).
+`packages.json` is a release catalog, **not** a DSM package-source endpoint. No hosted source is provided here. Use Manual Install below for published packages.
 
-Future upgrades appear automatically in Package Center.
+`syno/package_feed.py` exposes the provider-neutral, read-only WSGI callable `application`. A separately approved operator would mount that callable with an existing WSGI server behind an HTTPS endpoint, preserving DSM query strings and form bodies. It accepts GET query parameters or `application/x-www-form-urlencoded` POST (`arch`, `build`, optional `language`), filters supported architectures/DSM builds, and returns pinned release URLs. It has no listener, root requirement, installation action or deployment configuration.
+
+Only after separate hosting approval and runtime DSM compatibility testing, the native source entry would be:
+
+DSM → Package Center → Settings → Package Sources → Add → `<approved HTTPS endpoint mounting application>` (placeholder, not a working URL).
+
+The adapter refuses catalogs without integer `update_protocol: 1`, including the currently checked-in catalog of old published SPKs. Future CI may add this capability only after verifying actual SPK hooks, helper bytes and the pre-start gate/marker against current source. Newer version numbers alone do not qualify. This source change does not activate or publish anything.
+
+Native click-to-update upgrade hooks preserve configuration and require a verified cold PostgreSQL 14 backup before proceeding; failure blocks startup. They do not automatically restore databases or back up media. DSM Python 3.8 execution, hosted HTTPS compatibility, published SPKs and live upgrade/restore behavior remain unverified.
 
 ---
 
@@ -127,7 +130,8 @@ syno/                                 — Synology overlay (scripts, configs, wi
   src/scripts/start-stop-status       — DSM lifecycle hooks
   config-ui/                          — Web config UI (port 2284)
   docker/                             — Helper Dockerfiles (postgres+pgvector, ML)
-packages.json                         — Package Center custom source feed (auto-updated by CI)
+packages.json                         — release catalog, not a DSM endpoint
+syno/package_feed.py                   — read-only WSGI adapter (not deployed)
 immich/                               — Git submodule: immich-app/immich (pinned to current release)
 ```
 

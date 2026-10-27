@@ -3,6 +3,10 @@
 # Boots bundled deps (Redis, PostgreSQL) and waits until each is READY
 # before launching Immich. Immich is never started unless both deps are up.
 INSTALL_ROOT="/var/packages/immich/target"
+# A failed/missing preservation step must never start a migration on defaults.
+case "$1" in
+    start|restart) [ ! -e "${INSTALL_ROOT}/.update-required" ] || exit 1 ;;
+esac
 PKG_VAR="/var/packages/immich/var"          # persists across package upgrades
 RUN_DIR="${INSTALL_ROOT}/run"
 LOG_DIR="${INSTALL_ROOT}/log"
