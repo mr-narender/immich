@@ -15,7 +15,8 @@ GEODATA_DIR="${GEODATA_DIR:?GEODATA_DIR required}"
 SCRIPTS_SRC="$REPO/syno/src/scripts"
 FFMPEG_TAR="${FFMPEG_TAR:-}"      # optional: path to static ffmpeg tarball
 HEIF_DIR="${HEIF_DIR:-}"          # optional: dir containing libvips-cpp.so.8.18.3 + vips-heif.so
-W="/tmp/immich-spk-standalone"
+W="$(mktemp -d "${TMPDIR:-/tmp}/immich-spk-standalone.XXXXXX")"
+trap 'rm -rf "$W"' EXIT
 
 # pre-flight
 test -f "$SERVER_TAR"   || { echo "FATAL: SERVER_TAR not found: $SERVER_TAR";   exit 1; }
@@ -29,7 +30,7 @@ echo "[0] standalone build arch=$ARCH version=$VERSION"
 echo "    out=$OUT_SPK"
 
 # [1] fresh stage
-rm -rf "$W"; mkdir -p "$W/stage"
+mkdir -p "$W/stage"
 cd "$W/stage"
 
 # [2] server
@@ -155,6 +156,11 @@ chmod +x bin/immich-server bin/immich-microservices
 grep -q '^DB_VECTOR_EXTENSION=' ./env.default 2>/dev/null || \
   echo 'DB_VECTOR_EXTENSION=pgvector' >> ./env.default
 
+# Native DSM upgrade hooks run as the package user; no privileged updater is shipped.
+mkdir -p share
+cp "$REPO/syno/src/update_protocol.py" share/update_protocol.py
+printf '1\n' > .update-required
+
 # [11] pack package.tgz
 echo "[11] pack package.tgz"
 mkdir -p "$W/outer/scripts"
@@ -163,6 +169,10 @@ COPYFILE_DISABLE=1 tar czf "$W/outer/package.tgz" -C "$W/stage" .
 # [12] metadata overlays
 echo "[12] metadata"
 cp "$REPO/syno/INFO" "$W/outer/INFO"
+# Metadata must describe this exact native artifact, including its SPK revision.
+case "$ARCH" in x86_64|arm64) ;; *) echo 'Unsupported native architecture'; exit 1 ;; esac
+sed -i.bak -e "s/^version=.*/version=\"${VERSION}\"/" -e "s/^arch=.*/arch=\"${ARCH}\"/" "$W/outer/INFO"
+rm "$W/outer/INFO.bak"
 cp "$SCRIPTS_SRC/start-stop-status" "$W/outer/scripts/start-stop-status"
 cp "$SCRIPTS_SRC/preinst"           "$W/outer/scripts/preinst"
 [ -f "$SCRIPTS_SRC/postinst"   ] && cp "$SCRIPTS_SRC/postinst"   "$W/outer/scripts/postinst"
@@ -170,8 +180,9 @@ cp "$SCRIPTS_SRC/preinst"           "$W/outer/scripts/preinst"
 [ -f "$SCRIPTS_SRC/postuninst" ] && cp "$SCRIPTS_SRC/postuninst" "$W/outer/scripts/postuninst"
 chmod +x "$W/outer/scripts/"*
 [ -d "$REPO/syno/src/wizard" ] && cp -r "$REPO/syno/src/wizard" "$W/outer/wizard"
-printf '#!/bin/sh\nexit 0\n' > "$W/outer/scripts/preupgrade"
-printf '#!/bin/sh\nexit 0\n' > "$W/outer/scripts/postupgrade"
+cp "$SCRIPTS_SRC/preupgrade" "$W/outer/scripts/preupgrade"
+cp "$SCRIPTS_SRC/postupgrade" "$W/outer/scripts/postupgrade"
+cp "$REPO/syno/src/update_protocol.py" "$W/outer/scripts/update_protocol.py"
 chmod +x "$W/outer/scripts/preupgrade" "$W/outer/scripts/postupgrade"
 
 # [12b] outer conf/ (privilege, resource) — must be in outer SPK, not inside package.tgz

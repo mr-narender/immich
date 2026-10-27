@@ -11,9 +11,103 @@ Native Synology NAS package for Immich — no Docker required on the NAS.
 
 ---
 
-## Upgrade to a new release
+## Native DSM updates: source hooks, not an activated update service
 
-Single command, fully automated:
+**Package Center's one-click Update path is not operationally verified here.**
+Three separate things are required:
+
+1. **Publication:** a reviewed release must publish matching native SPKs containing
+   these new hooks. Existing published SPKs do not acquire hooks from this source edit.
+2. **Compatible catalog and registration:** `packages.json` remains a static catalog,
+   with offline identity/version/architecture/link checks only. A raw GitHub JSON URL
+   has not been proven compatible with DSM Package Sources, including HTTP method and
+   architecture selection. A compatible endpoint must be validated separately before
+   an administrator adds it in **Package Center → Settings → Package Sources**.
+   No source is automatically registered; the old unsupported `feeds.conf` write is
+   removed. Neither registration nor the Update button's visibility has been verified.
+3. **Native upgrade testing:** once a compatible source advertises a newer matching
+   package, the user clicks **Update** in Package Center. Alternatively, after trusted
+   artifact publication, use DSM's **Manual Install** with the matching newer SPK.
+   These use DSM's native installation lifecycle, not a root updater or config-UI API.
+
+No server, root hook, scheduler, unattended installer or new update UI is provided.
+The existing `upgrade.sh` is an unrelated operator source-build routine, not the
+native click-update implementation. Do not schedule it as a NAS updater.
+
+### Pre-upgrade backup and configuration preservation
+
+Standalone assembly ships `scripts/preupgrade`, `scripts/postinst`,
+`scripts/postupgrade`, and `update_protocol.py` (stdlib Python 3.8+, DSM
+`/usr/bin/python3`). Existing package-level `conf/privilege` remains unchanged.
+According to [DSM's lifecycle order](https://help.synology.com/developer-guide/synology_package/scripts.html#upgrade),
+DSM stops the old package, then executes the **new** preupgrade hook before old
+removal hooks; [the upgrade temporary directory](https://help.synology.com/developer-guide/synology_package/script_env_var.html)
+is used to hand off the preservation reference.
+
+The package-user preupgrade hook refuses to continue unless the old bundled
+`pg_controldata` is present, reports PostgreSQL **14**, and reports the PGDATA
+cluster exactly **shut down**. A `postmaster.pid`, other major version, unclean
+shutdown, external tablespace/symlink, unsafe ownership/mode, insufficient free
+space, or any copy/checksum failure aborts the upgrade before old removal.
+It does not connect to a live DB or DSM's system database, guess a role/port,
+restart PostgreSQL, or run `pg_dump` against a stopped server.
+
+Each attempt retains a cold physical copy of `var/pgdata`, plus exact bytes of
+`target/conf/immich.conf`, `var/ports.env`, and `var/ml-settings.env`, under:
+
+```
+/var/packages/immich/var/update-backups/attempt-<id>/
+    pgdata/          complete cold PostgreSQL 14 cluster copy
+    config          preserved immich.conf (contains secrets; mode 0600)
+    ports, ml       preserved when present
+    manifest.json   sizes/SHA256 hashes, no configuration values
+    status.json     pending / failed / ready / config-restored
+```
+
+The backup directory is owned by the package user, mode 0700, outside replaceable
+`target`; existing old `postuninst` does not delete it or PGDATA. Copies are
+byte-verified, source stability is checked again, and successful and failed
+snapshots are retained without pruning. Budget at least the PGDATA size plus
+20% and 16 MiB on the package-data volume **in addition to DSM installation space**.
+Large databases require a long maintenance window and repeated checksum reads.
+
+New postinst validates the retained snapshot and unchanged live PGDATA, requires
+the new bundled tool to remain PostgreSQL 14, and restores all three config files
+**before** defaults/config handling or startup. This preserves custom upload paths,
+DB settings, ports and ML settings without evaluating shell configuration in hooks.
+Missing/corrupt preservation fails closed, leaving `.update-required` present;
+startup checks that gate before sourcing configuration. A pending/failed/not-yet-
+restored attempt prevents another backup/upgrade until manually investigated.
+`config-restored` means only preservation finished, **not successful DB restoration,
+application startup, migrations, or endpoint health**.
+
+### Recovery limits and validation
+
+This is a physical PostgreSQL 14 cluster snapshot, not a portable logical dump,
+media backup, PITR system, or proof of restoration. No external tablespaces are
+supported. Keep independent photo/video backups and the compatible old PostgreSQL
+binaries/extensions/configuration needed for a recovery rehearsal on another NAS.
+Do not delete failure markers or snapshots merely to retry migrations. There is
+no automatic DB restore, binary downgrade, uninstall or photo deletion. Major PG
+upgrades and application/schema rollback require a separately tested recovery plan.
+
+Actual DSM hook permissions/temp-folder persistence, artifact publication, feed
+protocol/registration, native upgrade/startup and physical restore have **not been
+proven on a NAS** by these source/offline tests. After a separately authorized test
+upgrade, verify the installed package version, actual `/api/server/version`,
+`/api/server/ping`, migration results and photo access; an open port is insufficient.
+Nothing in this change activates or modifies a live NAS.
+
+Offline tests (no network, service, installation, scheduler or real PG binaries):
+
+```sh
+mkdir -p /tmp/immich-spk/tests
+TMPDIR=/tmp/immich-spk/tests uv run --no-project --no-python-downloads --python /usr/bin/python3 python -m unittest discover -s syno/tests
+```
+
+## Operator source-build upgrade (not NAS scheduling)
+
+The existing operator routine builds remotely and installs to a configured NAS:
 
 ```bash
 # Auto-detect latest GitHub release and upgrade

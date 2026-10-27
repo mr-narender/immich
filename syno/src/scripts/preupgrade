@@ -1,0 +1,3 @@
+#!/bin/sh
+# DSM executes the NEW hook while OLD target/config still exists (as package user).
+exec /usr/bin/python3 -I "$(dirname "$0")/update_protocol.py" save
