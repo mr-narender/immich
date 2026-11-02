@@ -21,8 +21,11 @@ class AdapterTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(f, 'read-only DSM feed adapter is missing')
         self.catalog = json.loads((REPO / 'packages.json').read_text())
-        for item in self.catalog['packages']:
+        for item, family in zip(self.catalog['packages'], ('x86_64', 'arm64')):
             item['update_protocol'] = 1
+            item['version'] = '3.3.5-2'
+            item['link'] = ('https://github.com/mr-narender/immich/releases/download/'
+                            'v3.3.5-2/immich-' + family + '-3.3.5-2.spk')
 
     def request(self, method='GET', query='arch=geminilake&build=72806&language=enu', body=b'', content_type='application/x-www-form-urlencoded', length=None, catalog=None):
         env = {}; setup_testing_defaults(env)
@@ -41,9 +44,11 @@ class AdapterTests(unittest.TestCase):
             response['loads'] = loader.call_count
         return response
 
-    def test_existing_published_catalog_is_refused_without_protocol(self):
-        current = json.loads((REPO / 'packages.json').read_text())
-        self.assertEqual(self.request(catalog=current)['status'], 503)
+    def test_legacy_catalog_is_refused_without_protocol(self):
+        legacy = copy.deepcopy(self.catalog)
+        for item in legacy['packages']:
+            item.pop('update_protocol', None)
+        self.assertEqual(self.request(catalog=legacy)['status'], 503)
 
     def test_wrong_boolean_or_missing_protocol_is_refused(self):
         for marker in (None, 0, 2, True, False, '1'):
@@ -62,6 +67,27 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(r['body']['packages']), 1)
         self.assertIn('immich-x86_64-', r['body']['packages'][0]['link'])
         self.assertEqual(r['headers']['Content-Type'], 'application/json; charset=utf-8')
+
+    def test_full_revision_tag_filters_both_families_without_accepting_legacy_revision_two(self):
+        data = copy.deepcopy(self.catalog)
+        for item, family in zip(data['packages'], ('x86_64', 'arm64')):
+            item['version'] = '3.3.5-2'
+            item['link'] = ('https://github.com/mr-narender/immich/releases/download/'
+                            'v3.3.5-2/immich-' + family + '-3.3.5-2.spk')
+        for arch in ('geminilake', 'rtd1296'):
+            response = self.request(query='arch=' + arch + '&build=72806', catalog=data)
+            self.assertEqual(response['status'], 200)
+            self.assertEqual(response['body']['packages'][0]['version'], '3.3.5-2')
+        data['packages'][0]['link'] = data['packages'][0]['link'].replace('/v3.3.5-2/', '/v3.3.5/')
+        self.assertEqual(self.request(catalog=data)['status'], 503)
+
+    def test_exact_legacy_revision_one_urls_remain_read_compatible(self):
+        legacy = copy.deepcopy(self.catalog)
+        for item, family in zip(legacy['packages'], ('x86_64', 'arm64')):
+            item['version'] = '3.3.5-1'
+            item['link'] = ('https://github.com/mr-narender/immich/releases/download/'
+                            'v3.3.5/immich-' + family + '-3.3.5-1.spk')
+        self.assertEqual(self.request(catalog=legacy)['status'], 200)
 
     def test_form_post_filters_exactly_one_arm_package(self):
         r = self.request(method='POST', query='', body=b'arch=rtd1296&build=72806&language=enu')

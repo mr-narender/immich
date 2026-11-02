@@ -5,27 +5,54 @@ on:
     - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
-      force_rebuild:
-        description: "Rebuild and re-release even if this version already exists"
-        type: boolean
-        default: false
+      upstream_version:
+        description: "Stable upstream version without v (set together with spk_revision)"
+        type: string
+        default: ''
+      spk_revision:
+        description: "Unused packaging revision, e.g. 2 for upstream 3.3.5"
+        type: string
+        default: ''
 
 permissions:
   contents: write
 
+# Serialize detection through advertisement; never cancel an in-flight publication.
+concurrency:
+  group: immich-spk-publication
+  cancel-in-progress: false
+
 jobs:
   detect:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
       spk_version: ${{ steps.check.outputs.spk_version }}
       should_release: ${{ steps.check.outputs.should_release }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Offline producer tests
+        run: python3 -B -m unittest discover -s syno/tests -q
+
       - name: Detect latest Immich release
         id: check
         run: |
           python3 - << 'PYEOF'
-          import urllib.request, urllib.error, json, os
+          import urllib.request, json, os, re, sys
+          sys.path.insert(0, 'syno')
+          from release_checks import assert_unused
+
+          upstream = os.environ.get('UPSTREAM_VERSION', '')
+          revision = os.environ.get('SPK_REVISION', '')
+          stable = r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})'
+          if bool(upstream) != bool(revision):
+              raise ValueError('set upstream_version and spk_revision together')
+          if upstream and (not re.fullmatch(stable, upstream) or
+                           not re.fullmatch(r'[1-9][0-9]{0,8}', revision)):
+              raise ValueError('invalid stable upstream version or packaging revision')
 
           headers = {
               'Accept': 'application/vnd.github.v3+json',
@@ -36,35 +63,29 @@ jobs:
               headers['Authorization'] = 'token ' + token
 
           req = urllib.request.Request(
-              'https://api.github.com/repos/immich-app/immich/releases/latest',
+              'https://api.github.com/repos/immich-app/immich/releases/' +
+              ('tags/v' + upstream if upstream else 'latest'),
               headers=headers,
           )
-          with urllib.request.urlopen(req) as r:
+          with urllib.request.urlopen(req, timeout=30) as r:
               data = json.loads(r.read())
 
-          version = data['tag_name'].lstrip('v')
-          spk_version = version + '-1'
-
-          exist_req = urllib.request.Request(
-              'https://api.github.com/repos/mr-narender/immich/releases/tags/v' + version,
-              headers=headers,
-          )
-          force = os.environ.get('FORCE_REBUILD', '').lower() in ('true', '1', 'yes')
+          version = data['tag_name'][1:]
+          if (data['tag_name'] != 'v' + version or not re.fullmatch(stable, version) or
+                  (upstream and version != upstream) or data.get('draft') is not False or
+                  data.get('prerelease') is not False):
+              raise ValueError('upstream must be the requested stable published release')
+          revision = revision or '1'
+          spk_version = version + '-' + revision
           try:
-              with urllib.request.urlopen(exist_req) as r:
-                  r.read()
-              if force:
-                  should_release = 'true'
-                  print('Force-rebuild: v' + version + ' already published — rebuilding anyway')
-              else:
-                  should_release = 'false'
-                  print('Release v' + version + ' already published — skipping')
-          except urllib.error.HTTPError as e:
-              if e.code == 404:
-                  should_release = 'true'
-                  print('New Immich v' + version + ' — will build SPK')
-              else:
-                  raise
+              # Legacy v<upstream> already owns packaging revision 1 forever.
+              if revision == '1':
+                  assert_unused('v' + version)
+              assert_unused('v' + spk_version)
+              should_release = 'true'
+          except ValueError as error:
+              print(str(error) + ' — skipping, never replacing publication')
+              should_release = 'false'
 
           out = os.environ['GITHUB_OUTPUT']
           with open(out, 'a') as f:
@@ -74,7 +95,8 @@ jobs:
           PYEOF
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          UPSTREAM_VERSION: ${{ inputs.upstream_version }}
+          SPK_REVISION: ${{ inputs.spk_revision }}
 
   build:
     needs: detect
@@ -518,6 +540,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Download SPK artifacts
         uses: actions/download-artifact@v4
@@ -526,10 +550,9 @@ jobs:
 
       - name: Locate SPK files
         run: |
-          X86_SPK=$(find artifacts/ -name "immich-x86_64-*.spk" | head -1)
-          ARM64_SPK=$(find artifacts/ -name "immich-arm64-*.spk" | head -1)
-          [ -z "$X86_SPK"   ] && { echo "FATAL: x86_64 SPK artifact not found"; exit 1; }
-          [ -z "$ARM64_SPK" ] && { echo "FATAL: arm64 SPK artifact not found";  exit 1; }
+          X86_SPK="artifacts/spk-x86_64/immich-x86_64-${SPK_VERSION}.spk"
+          ARM64_SPK="artifacts/spk-arm64/immich-arm64-${SPK_VERSION}.spk"
+          test -f "$X86_SPK" && test -f "$ARM64_SPK"
           echo "X86_SPK=${X86_SPK}"                         >> "$GITHUB_ENV"
           echo "ARM64_SPK=${ARM64_SPK}"                     >> "$GITHUB_ENV"
           echo "X86_SPK_NAME=$(basename "${X86_SPK}")"       >> "$GITHUB_ENV"
@@ -548,7 +571,7 @@ jobs:
           arm64_name   = os.environ['ARM64_SPK_NAME']
           repo         = 'mr-narender/immich'
 
-          base_url = 'https://github.com/' + repo + '/releases/download/v' + version + '/'
+          base_url = 'https://github.com/' + repo + '/releases/download/v' + spk_version + '/'
           # Never infer preservation capability from a version or artifact name.
           x86_protocol = verified_protocol(os.environ['X86_SPK'], 'x86_64', spk_version)
           arm64_protocol = verified_protocol(os.environ['ARM64_SPK'], 'arm64', spk_version)
@@ -619,23 +642,33 @@ jobs:
           print('syno/INFO updated: changelog=Immich v' + version)
           PYEOF
 
-      - name: Commit and push metadata
+      - name: Reserve unused release tag at reviewed producer commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git diff --quiet || git stash
-          git pull --rebase origin main
-          git stash list | grep -q 'stash@{0}' && git stash pop || true
-          git add packages.json syno/INFO
-          git diff --staged --quiet || \
-            git commit -m "chore: bump to Immich v${VERSION} (SPK ${SPK_VERSION})"
-          git push origin main
+          python3 - << 'PYEOF'
+          import os, sys
+          sys.path.insert(0, 'syno')
+          from release_checks import assert_unused
+          if os.environ['SPK_VERSION'].endswith('-1'):
+              assert_unused('v' + os.environ['VERSION'])
+          assert_unused('v' + os.environ['SPK_VERSION'])
+          PYEOF
+          # Atomic ref creation rejects even a tag created after the read-only check.
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/v${SPK_VERSION}" -f "sha=${GITHUB_SHA}"
 
       - name: Create GitHub Release
+        id: publish
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.detect.outputs.version }}
-          name: Immich ${{ needs.detect.outputs.version }} for Synology
+          tag_name: v${{ needs.detect.outputs.spk_version }}
+          target_commitish: ${{ github.sha }}
+          name: Immich ${{ needs.detect.outputs.spk_version }} for Synology
+          prerelease: false
+          overwrite_files: false
+          fail_on_unmatched_files: true
           body: |
             ## Immich ${{ needs.detect.outputs.version }} for Synology DSM
 
@@ -672,3 +705,27 @@ jobs:
             ${{ env.ARM64_SPK }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify actual immutable publication before advertisement
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.publish.outputs.id }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, sys
+          sys.path.insert(0, 'syno')
+          from release_checks import verify_published
+          verify_published(os.environ['SPK_VERSION'], os.environ['GITHUB_SHA'],
+                           os.environ['RELEASE_ID'],
+                           [os.environ['X86_SPK'], os.environ['ARM64_SPK']])
+          PYEOF
+
+      - name: Commit and push verified metadata
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages.json syno/INFO
+          git diff --staged --quiet || \
+            git commit -m "chore: bump to Immich v${VERSION} (SPK ${SPK_VERSION})"
+          # If main advanced during the build, fail rather than rebasing reviewed source.
+          git push origin HEAD:main

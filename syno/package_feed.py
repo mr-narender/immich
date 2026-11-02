@@ -112,9 +112,12 @@ def select_package(catalog, device_arch):
         if len(families) != 1 or len(set(names)) != len(names):
             raise ValueError('invalid architecture metadata')
         family = families[0]
-        app = item['version'].split('-')[0]
-        expected = REPOSITORY + '/releases/download/v' + app + '/immich-' + family + '-' + item['version'] + '.spk'
-        if item['link'] != expected:
+        app, revision = item['version'].split('-')
+        filename = '/immich-' + family + '-' + item['version'] + '.spk'
+        expected = REPOSITORY + '/releases/download/v' + item['version'] + filename
+        # Only historical first revisions used the upstream-only tag.
+        legacy = REPOSITORY + '/releases/download/v' + app + filename if revision == '1' else None
+        if item['link'] not in (expected, legacy):
             raise ValueError('unapproved artifact URL')
         if family == native and (device_arch in names or device_arch in ('x86_64','arm64','aarch64')):
             selected.append(item)
