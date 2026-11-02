@@ -1,9 +1,19 @@
 """Trusted CI capability check against current source; never extracts or installs SPKs."""
+import hashlib
 from pathlib import Path
 import re
 import tarfile
 
 SOURCE = Path(__file__).resolve().parent / 'src'
+
+
+def artifact_md5(spk):
+    """Whole-SPK MD5 for DSM catalog rows; release_checks still verifies SHA-256."""
+    digest = hashlib.md5()
+    with open(spk, 'rb') as body:
+        for block in iter(lambda: body.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def verified_protocol(spk, arch, version):

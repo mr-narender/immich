@@ -23,8 +23,12 @@ class FeedTests(unittest.TestCase):
             legacy = 'https://github.com/mr-narender/immich/releases/download/v%s/immich-%s-%s.spk' % (app, arch, item['version'])
             approved = (expected, legacy) if item['version'].endswith('-1') else (expected,)
             self.assertIn(item['link'], approved)
+            # DSM third-party servers (spkrepo, sspks) send the whole-SPK MD5.
+            self.assertRegex(item['md5'], r'^[0-9a-f]{32}$')
+            self.assertNotIn('os_min_ver', item)
         self.assertEqual(seen, {'x86_64', 'arm64'})
         self.assertEqual(feed[0]['version'], feed[1]['version'])
+        self.assertNotEqual(feed[0]['md5'], feed[1]['md5'])
         self.assertFalse(set(feed[0]['arch'].split()) & set(feed[1]['arch'].split()))
 
     def test_no_unsupported_automatic_feed_registration_promise(self):

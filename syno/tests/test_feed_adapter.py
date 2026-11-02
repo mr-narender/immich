@@ -66,7 +66,19 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(r['status'], 200); self.assertEqual(r['loads'], 1)
         self.assertEqual(len(r['body']['packages']), 1)
         self.assertIn('immich-x86_64-', r['body']['packages'][0]['link'])
+        self.assertEqual(r['body']['packages'][0]['md5'], self.catalog['packages'][0]['md5'])
         self.assertEqual(r['headers']['Content-Type'], 'application/json; charset=utf-8')
+
+    def test_missing_or_malformed_md5_is_refused(self):
+        for value in (None, '', 'A' * 32, '0' * 31, '0' * 64, 1):
+            data = copy.deepcopy(self.catalog)
+            if value is None:
+                del data['packages'][0]['md5']
+            else:
+                data['packages'][0]['md5'] = value
+            response = self.request(catalog=data)
+            self.assertEqual(response['status'], 503, repr(value))
+            self.assertEqual(response['body']['packages'], [])
 
     def test_full_revision_tag_filters_both_families_without_accepting_legacy_revision_two(self):
         data = copy.deepcopy(self.catalog)

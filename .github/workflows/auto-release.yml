@@ -563,7 +563,7 @@ jobs:
           python3 - << 'PYEOF'
           import json, os, sys
           sys.path.insert(0, 'syno')
-          from verify_update_artifact import verified_protocol
+          from verify_update_artifact import artifact_md5, verified_protocol
 
           version      = os.environ['VERSION']
           spk_version  = os.environ['SPK_VERSION']
@@ -601,10 +601,10 @@ jobs:
 
           feed = {
               'packages': [
-                  dict(common, update_protocol=x86_protocol,
+                  dict(common, update_protocol=x86_protocol, md5=artifact_md5(os.environ['X86_SPK']),
                        arch='x86_64 bromolow cedarview avoton grantley broadwell broadwellnk broadwellnkv2 broadwellds apollolake denverton purley coffeelake skylaked geminilake v1000 r1000 epyc7002',
                        link=base_url + x86_name),
-                  dict(common, update_protocol=arm64_protocol,
+                  dict(common, update_protocol=arm64_protocol, md5=artifact_md5(os.environ['ARM64_SPK']),
                        arch='rtd1296 rtd1619b armada37xx ac7613 ac7565',
                        link=base_url + arm64_name),
               ]
