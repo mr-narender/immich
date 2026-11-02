@@ -19,8 +19,10 @@ class FeedTests(unittest.TestCase):
             self.assertNotIn(arch, seen); seen.add(arch)
             self.assertTrue(item['arch'].split())
             app = item['version'].split('-')[0]
-            expected = 'https://github.com/mr-narender/immich/releases/download/v%s/immich-%s-%s.spk' % (app, arch, item['version'])
-            self.assertEqual(item['link'], expected)
+            expected = 'https://github.com/mr-narender/immich/releases/download/v%s/immich-%s-%s.spk' % (item['version'], arch, item['version'])
+            legacy = 'https://github.com/mr-narender/immich/releases/download/v%s/immich-%s-%s.spk' % (app, arch, item['version'])
+            approved = (expected, legacy) if item['version'].endswith('-1') else (expected,)
+            self.assertIn(item['link'], approved)
         self.assertEqual(seen, {'x86_64', 'arm64'})
         self.assertEqual(feed[0]['version'], feed[1]['version'])
         self.assertFalse(set(feed[0]['arch'].split()) & set(feed[1]['arch'].split()))

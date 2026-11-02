@@ -28,7 +28,7 @@ class AssemblyTests(unittest.TestCase):
                 return str(p)
             geodata = root / 'geo'; geodata.mkdir()
             out = root / 'candidate.spk'
-            env = dict(os.environ, REPO=str(REPO), VERSION='3.3.6-2', ARCH='arm64',
+            env = dict(os.environ, REPO=str(REPO), VERSION='3.3.5-2', ARCH='arm64',
                        OUT_SPK=str(out), TMPDIR=str(root),
                        SERVER_TAR=archive('server.tgz','dist/main.js'), WEB_TAR=archive('web.tgz','web/index.html'),
                        POSTGRES_TAR=archive('pg.tgz','bin/pg_controldata'), REDIS_TAR=archive('redis.tgz','bin/redis-server'),
@@ -38,7 +38,7 @@ class AssemblyTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr.decode()[:2000])
             with tarfile.open(out) as outer, tarfile.open(fileobj=outer.extractfile('package.tgz'), mode='r:gz') as inner:
                 info = outer.extractfile('INFO').read().decode()
-                self.assertIn('version="3.3.6-2"', info); self.assertIn('arch="arm64"', info)
+                self.assertIn('version="3.3.5-2"', info); self.assertIn('arch="arm64"', info)
                 for name in ('preupgrade','postupgrade','postinst','start-stop-status'):
                     member = outer.getmember('scripts/' + name)
                     self.assertTrue(member.mode & 0o111, name + ' must be executable')
@@ -54,8 +54,8 @@ class AssemblyTests(unittest.TestCase):
             self.assertTrue(verifier_path.exists(), 'catalog capability requires an archive verifier')
             spec = importlib.util.spec_from_file_location('verify_update_artifact', verifier_path)
             verifier = importlib.util.module_from_spec(spec); spec.loader.exec_module(verifier)
-            self.assertEqual(verifier.verified_protocol(out, 'arm64', '3.3.6-2'), 1)
-            x86 = root / 'immich-x86_64-3.3.6-2.spk'
+            self.assertEqual(verifier.verified_protocol(out, 'arm64', '3.3.5-2'), 1)
+            x86 = root / 'immich-x86_64-3.3.5-2.spk'
             x86_env = dict(env, ARCH='x86_64', OUT_SPK=str(x86))
             built = subprocess.run(['bash', str(REPO / 'syno/assemble-standalone.sh')], env=x86_env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
@@ -65,18 +65,22 @@ class AssemblyTests(unittest.TestCase):
             step = workflow.split('      - name: Update packages.json\n', 1)[1]
             code = textwrap.dedent(step.split("          python3 - << 'PYEOF'\n", 1)[1].split('          PYEOF', 1)[0])
             (root / 'syno').symlink_to(REPO / 'syno', target_is_directory=True)
-            ci_env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', VERSION='3.3.6', SPK_VERSION='3.3.6-2',
+            ci_env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', VERSION='3.3.5', SPK_VERSION='3.3.5-2',
                           X86_SPK=str(x86), ARM64_SPK=str(out), X86_SPK_NAME=x86.name,
-                          ARM64_SPK_NAME='immich-arm64-3.3.6-2.spk')
+                          ARM64_SPK_NAME='immich-arm64-3.3.5-2.spk')
             generated = subprocess.run([sys.executable, '-B', '-c', code], cwd=root, env=ci_env,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(generated.returncode, 0, generated.stderr.decode()[:2000])
             catalog = (root / 'packages.json').read_bytes()
             self.assertEqual([item['update_protocol'] for item in json.loads(catalog)['packages']], [1, 1])
+            self.assertEqual([item['link'] for item in json.loads(catalog)['packages']], [
+                'https://github.com/mr-narender/immich/releases/download/v3.3.5-2/immich-x86_64-3.3.5-2.spk',
+                'https://github.com/mr-narender/immich/releases/download/v3.3.5-2/immich-arm64-3.3.5-2.spk'])
+            self.assertEqual(verifier.verified_protocol(x86, 'x86_64', '3.3.5-2'), 1)
             with self.assertRaises(ValueError):
-                verifier.verified_protocol(out, 'x86_64', '3.3.6-2')
+                verifier.verified_protocol(out, 'x86_64', '3.3.5-2')
             with self.assertRaises(ValueError):
-                verifier.verified_protocol(out, 'arm64', '3.3.6-3')
+                verifier.verified_protocol(out, 'arm64', '3.3.5-3')
 
             def contents(archive):
                 with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -107,7 +111,7 @@ class AssemblyTests(unittest.TestCase):
                             body = repack(outer_entries, name, replacement)
                         bad = root / 'bad.spk'; bad.write_bytes(body)
                         with self.assertRaises(ValueError):
-                            verifier.verified_protocol(bad, 'arm64', '3.3.6-2')
+                            verifier.verified_protocol(bad, 'arm64', '3.3.5-2')
             ci_env['ARM64_SPK'] = str(bad)
             refused = subprocess.run([sys.executable, '-B', '-c', code], cwd=root, env=ci_env,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
