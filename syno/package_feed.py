@@ -101,6 +101,8 @@ def select_package(catalog, device_arch):
             raise ValueError('wrong package identity')
         if type(item.get('update_protocol')) is not int or item['update_protocol'] != 1:
             raise ValueError('unsupported update preservation protocol')
+        if not isinstance(item.get('md5'), str) or not re.fullmatch('[0-9a-f]{32}', item['md5']):
+            raise ValueError('missing or invalid artifact md5')
         if not VERSION.fullmatch(item['version']):
             raise ValueError('invalid stable package version')
         versions.add(item['version'])

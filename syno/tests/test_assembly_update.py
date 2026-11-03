@@ -1,5 +1,6 @@
 """Tiny real assembly fixture: no compilation, network, services or installation."""
 import copy
+import hashlib
 import io
 import importlib.util
 import json
@@ -76,6 +77,8 @@ class AssemblyTests(unittest.TestCase):
             self.assertEqual([item['link'] for item in json.loads(catalog)['packages']], [
                 'https://github.com/mr-narender/immich/releases/download/v3.3.5-2/immich-x86_64-3.3.5-2.spk',
                 'https://github.com/mr-narender/immich/releases/download/v3.3.5-2/immich-arm64-3.3.5-2.spk'])
+            self.assertEqual([item['md5'] for item in json.loads(catalog)['packages']],
+                             [hashlib.md5(x86.read_bytes()).hexdigest(), hashlib.md5(out.read_bytes()).hexdigest()])
             self.assertEqual(verifier.verified_protocol(x86, 'x86_64', '3.3.5-2'), 1)
             with self.assertRaises(ValueError):
                 verifier.verified_protocol(out, 'x86_64', '3.3.5-2')
