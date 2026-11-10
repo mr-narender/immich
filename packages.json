@@ -3,7 +3,7 @@
     {
       "id": "immich",
       "package": "immich",
-      "version": "3.3.6-1",
+      "version": "3.4.0-1",
       "dname": "Immich",
       "desc": "High-performance self-hosted photo and video management solution.",
       "price": 0,
@@ -20,16 +20,16 @@
       "maintainer": "SLR Software Inc.",
       "distributor": "mr-narender",
       "distributor_url": "https://github.com/mr-narender/immich",
-      "changelog": "Immich v3.3.6",
+      "changelog": "Immich v3.4.0",
       "update_protocol": 1,
-      "md5": "892ca44c1fc6aa01c8afca3726722be8",
+      "md5": "3acd628818b33cbdc626295010e86249",
       "arch": "x86_64 bromolow cedarview avoton grantley broadwell broadwellnk broadwellnkv2 broadwellds apollolake denverton purley coffeelake skylaked geminilake v1000 r1000 epyc7002",
-      "link": "https://github.com/mr-narender/immich/releases/download/v3.3.6-1/immich-x86_64-3.3.6-1.spk"
+      "link": "https://github.com/mr-narender/immich/releases/download/v3.4.0-1/immich-x86_64-3.4.0-1.spk"
     },
     {
       "id": "immich",
       "package": "immich",
-      "version": "3.3.6-1",
+      "version": "3.4.0-1",
       "dname": "Immich",
       "desc": "High-performance self-hosted photo and video management solution.",
       "price": 0,
@@ -46,11 +46,11 @@
       "maintainer": "SLR Software Inc.",
       "distributor": "mr-narender",
       "distributor_url": "https://github.com/mr-narender/immich",
-      "changelog": "Immich v3.3.6",
+      "changelog": "Immich v3.4.0",
       "update_protocol": 1,
-      "md5": "2b61e21cd190c04432198b97fa6323ae",
+      "md5": "8a30c69c6d325eb72ebd4136f9e3f49f",
       "arch": "rtd1296 rtd1619b armada37xx ac7613 ac7565",
-      "link": "https://github.com/mr-narender/immich/releases/download/v3.3.6-1/immich-arm64-3.3.6-1.spk"
+      "link": "https://github.com/mr-narender/immich/releases/download/v3.4.0-1/immich-arm64-3.4.0-1.spk"
     }
   ]
 }
