@@ -8,7 +8,7 @@
 # Prerequisites (all must be reachable from Mac):
 #   vm105 — 192.168.2.105 (immich-build, ssh narender@)
 #   NAS   — 192.168.2.2   (ssh narender@, sudo available)
-#   ~/dev/tools/immich/immich-x86_64-2.7.5-1.spk — base SPK for binary deps
+#   ~/Developer/tools/immich/immich-x86_64-2.7.5-1.spk — base SPK for binary deps
 #
 # What this script does:
 #   1. Detect target version (arg or GitHub latest)
