@@ -292,6 +292,46 @@ def restore(package, temp_folder):
         raise
 
 
+def prune(package=PACKAGE):
+    """After a healthy start, keep only the newest completed backup.
+
+    Runs only when no upgrade is pending and every backup is config-restored;
+    any failed/pending backup is left untouched for investigation.
+    """
+    if (package / 'target/.update-required').exists():
+        raise ValueError('upgrade still pending; nothing pruned')
+    var = directory((package / 'var').resolve(strict=True))
+    root = var / 'update-backups'
+    if not root.exists():
+        return []
+    directory(root, private=True)
+    trash = directory(var / 'update-backups-pruning', create=True, private=True)
+    with locked(root):
+        attempts = []
+        for old in root.iterdir():
+            if old.name == 'lock':
+                continue
+            directory(old, private=True)
+            try:
+                status = json.loads(read_file(old / 'status.json'))
+            except (OSError, ValueError):
+                raise ValueError('incomplete backup requires manual investigation') from None
+            if status != {'status':'config-restored', 'attempt':old.name}:
+                raise ValueError('outstanding backup/upgrade requires manual investigation')
+            attempts.append(((old / 'status.json').stat().st_mtime_ns, old.name, old))
+        attempts.sort()
+        removed = []
+        for _, name, old in attempts[:-1]:
+            # Atomic move out of the backup root first: an interrupted delete can
+            # never leave a status-less attempt that would block the next upgrade.
+            os.rename(str(old), str(trash / name))
+            removed.append(name)
+        sync_directory(root)
+    for leftover in trash.iterdir():
+        shutil.rmtree(str(leftover), ignore_errors=True)
+    return removed
+
+
 def preserve(action, package=PACKAGE, temp=None, upgrading=False):
     marker = package / 'target/.update-required'
     if not upgrading:
@@ -317,6 +357,16 @@ def preserve(action, package=PACKAGE, temp=None, upgrading=False):
 
 
 def main():
+    if sys.argv[1:] == ['prune']:
+        try:
+            if os.geteuid() == 0:
+                raise ValueError('package user required')
+            removed = prune()
+            print('pruned %d old update backup(s)' % len(removed))
+            return 0
+        except Exception as error:
+            print('Old update backups kept: %s' % error, file=sys.stderr)
+            return 1
     try:
         status = os.environ.get('SYNOPKG_PKG_STATUS')
         if os.geteuid() == 0 or status not in ('INSTALL', 'UPGRADE'):
