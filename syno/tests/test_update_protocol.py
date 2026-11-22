@@ -13,6 +13,10 @@ spec = importlib.util.spec_from_file_location('update_protocol', SOURCE / 'updat
 p = importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
 
 
+def read_ref(temp):
+    return (temp / 'immich-preserve-v1/manifest.json').read_text()
+
+
 class PreservationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
@@ -159,6 +163,55 @@ class PreservationTests(unittest.TestCase):
         self.restore()
         self.assertEqual(json.loads((backup / 'status.json').read_text())['status'], 'config-restored')
         self.assertTrue((backup / 'pgdata/base/1/123').exists())
+
+    def upgrade_cycles(self, count):
+        names = []
+        start = len(list(self.base.glob('upgrade-*')))
+        for i in range(start, start + count):
+            temp = self.base / ('upgrade-%d' % i); temp.mkdir(mode=0o700)
+            p.preserve('save', self.package, temp, upgrading=True)
+            p.preserve('restore', self.package, temp, upgrading=True)
+            new = json.loads(read_ref(temp))['attempt']
+            os.utime(self.package / 'var/update-backups' / new / 'status.json', ns=(i * 10**9, i * 10**9))
+            names.append(new)
+        return names
+
+    def test_prune_keeps_only_newest_completed_backup(self):
+        names = self.upgrade_cycles(3)
+        self.assertEqual(len(self.attempts()), 3, 'history accumulates until pruned')
+        self.assertEqual(sorted(p.prune(self.package)), sorted(names[:2]))
+        self.assertEqual([a.name for a in self.attempts()], [names[2]])
+        self.assertTrue((self.attempts()[0] / 'pgdata/base/1/123').exists())
+        self.assertEqual(list((self.package / 'var/update-backups-pruning').iterdir()), [])
+        self.assertEqual(p.prune(self.package), [], 'idempotent on every start')
+        self.upgrade_cycles(1)  # the next upgrade still works after pruning
+
+    def test_prune_never_touches_failed_or_pending_backup(self):
+        names = self.upgrade_cycles(2)
+        status = self.package / 'var/update-backups' / names[0] / 'status.json'
+        for state in ('failed', 'pending', 'ready'):
+            status.write_text(json.dumps({'status': state, 'attempt': names[0]}))
+            with self.assertRaisesRegex(ValueError, 'manual investigation'):
+                p.prune(self.package)
+            self.assertEqual(len(self.attempts()), 2)
+
+    def test_prune_refused_while_upgrade_pending(self):
+        self.upgrade_cycles(2)
+        (self.package / 'target/.update-required').write_text('1\n')
+        with self.assertRaisesRegex(ValueError, 'upgrade still pending'):
+            p.prune(self.package)
+        self.assertEqual(len(self.attempts()), 2)
+
+    def test_prune_without_backups_is_noop(self):
+        (self.package / 'target/.update-required').unlink()
+        self.assertEqual(p.prune(self.package), [])
+        self.assertFalse((self.package / 'var/update-backups').exists())
+
+    def test_prune_runs_only_after_healthy_start_in_background(self):
+        start = (SOURCE / 'scripts/start-stop-status').read_text()
+        body = start[start.index('_prune_backups_when_healthy() {'):start.index('# ── Immich')]
+        self.assertLess(body.index('/api/server/ping'), body.index('update_protocol.py" prune'))
+        self.assertIn('_prune_backups_when_healthy >/dev/null 2>&1 &', start[start.index('_start() {'):])
 
     def test_absent_optional_files_remain_absent(self):
         (self.package / p.FILES['ml']).unlink()

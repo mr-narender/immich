@@ -204,6 +204,21 @@ _start_configui() {
     _log "_start_configui: started on :2284 (pid=$!)"
 }
 
+# ── Old update backups: prune only after the new version is healthy ────────
+# preupgrade takes a cold DB backup; once Immich answers on its port after a
+# start (i.e. the update succeeded and migrations ran), keep only the newest.
+_prune_backups_when_healthy() {
+    i=0
+    while [ "${i}" -lt 120 ]; do
+        if curl -fsS -m 5 "http://127.0.0.1:${IMMICH_PORT}/api/server/ping" >/dev/null 2>&1; then
+            _log "backup prune: $(/usr/bin/python3 -I "${INSTALL_ROOT}/share/update_protocol.py" prune 2>&1)"
+            return 0
+        fi
+        i=$((i + 1)); sleep 5
+    done
+    _log "backup prune skipped: Immich not healthy within 10 min; old backups kept"
+}
+
 # ── Immich ────────────────────────────────────────────────────────────────
 _start() {
     mkdir -p "${RUN_DIR}" "${LOG_DIR}"
@@ -243,6 +258,8 @@ _start() {
 
     # Config UI is optional — never blocks Immich startup.
     _start_configui
+    # Background: never delays DSM's start/upgrade request.
+    _prune_backups_when_healthy >/dev/null 2>&1 &
     return 0
 }
 
