@@ -163,17 +163,14 @@ def copy_database(data, dest, expected):
             fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, 'wb') as out:
                 actual = file_digest(data / name, out)
-                out.flush(); os.fsync(out.fileno())
             if actual != entry:
                 raise ValueError('database changed while copying')
-    if inventory(dest) != expected or inventory(data) != expected:
+    # One blocking flush of every copied file and directory entry. Per-file fsync
+    # (~1900 files) pushed DSM's synchronous upgrade past the Package Center 120 s
+    # request timeout. The caller re-verifies the source after require_clean.
+    os.sync()
+    if inventory(dest) != expected:
         raise ValueError('database copy verification failed')
-    for root, dirs, files in os.walk(str(dest), topdown=False):
-        fd = os.open(root, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
 
 def manifest_files(package):
