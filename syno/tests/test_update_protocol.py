@@ -108,6 +108,22 @@ class PreservationTests(unittest.TestCase):
         with mock.patch.object(p.os, 'fsync', side_effect=sync), mock.patch.object(p, 'save_json', side_effect=save):
             self.save()
 
+    def test_database_copy_flushes_once_before_ready(self):
+        # Per-file fsync made preupgrade exceed DSM's 120 s Package Center timeout.
+        events = []
+        real_sync, real_save = p.os.sync, p.save_json
+        copied = self.package / 'var/update-backups'
+        def save(path, value):
+            if value.get('status') == 'ready':
+                events.append('ready')
+            real_save(path, value)
+        with mock.patch.object(p.os, 'sync', side_effect=lambda: (events.append('sync'), real_sync())), \
+                mock.patch.object(p, 'save_json', side_effect=save):
+            self.save()
+        self.assertEqual(events.count('sync'), 1)
+        self.assertLess(events.index('sync'), events.index('ready'))
+        self.assertTrue(any(copied.glob('attempt-*/pgdata/base/1/123')))
+
     def assert_parent_sync_failure(self, name):
         real_fsync = p.os.fsync
         def sync(fd):

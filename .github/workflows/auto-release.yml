@@ -505,7 +505,9 @@ jobs:
           ls -lh /tmp/geodata-out/
 
       - name: Patch syno/INFO version
-        run: sed -i "s/^version=.*/version=${SPK_VERSION}/" syno/INFO
+        run: |
+          sed -i -e "s/^version=.*/version=${SPK_VERSION}/" \
+                 -e "s/^changelog=.*/changelog=\"Immich v${VERSION}\"/" syno/INFO
 
       - name: Assemble SPK
         run: |
@@ -581,7 +583,7 @@ jobs:
               'package': 'immich',
               'version': spk_version,
               'dname': 'Immich',
-              'desc': 'High-performance self-hosted photo and video management solution.',
+              'desc': 'Self-hosted Immich photo and video server. Web UI on port 2283, settings on port 2284.',
               'price': 0,
               'download_count': 0,
               'qinst': True,
